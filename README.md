@@ -5,8 +5,6 @@
 基于 Playwright 和 AI 的闲鱼多任务实时监控工具，提供完整的 Web 管理界面。
 
 
-[庆祝项目达成 🌟1W star🌟！直接送gpt-5.4 apikey！点击进入](https://github.com/Usagi-org/ai-goofish-monitor/issues/435)
-
 ## 核心特性
 
 - **Web 可视化管理**: 任务管理、账号管理、AI 标准编辑、运行日志、结果浏览
