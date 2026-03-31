@@ -29,6 +29,10 @@ const secretConfigured = reactive<Record<string, boolean>>({})
 const clearedFields = reactive<Record<string, boolean>>({})
 const testResults = reactive<Record<string, { success: boolean; message: string; label: string }>>({})
 const testingChannel = ref<string | null>(null)
+const WEBHOOK_HEADERS_EXAMPLE = '{"Authorization":"Bearer token"}'
+const WEBHOOK_QUERY_EXAMPLE = '{"task":"{{title}}"}'
+const WEBHOOK_BODY_EXAMPLE = '{"message":"{{content}}","price":"{{price}}"}'
+const WEBHOOK_TEMPLATE_VARIABLES = '{{title}}, {{content}}, {{price}}, {{reason}}, {{desktop_link}}, {{mobile_link}}'
 const mutableInitialValues = initialValues as Record<string, string | boolean | null | undefined>
 const mutableForm = form as Record<string, string | boolean | null | undefined>
 const mutableClearedFields = clearedFields as Record<string, boolean>
@@ -81,6 +85,10 @@ const activeChannels = computed(() => props.settings.CONFIGURED_CHANNELS ?? [])
 const summaryText = computed(() => (
   activeChannels.value.length ? activeChannels.value.join(' / ') : t('notifyPanel.noActiveChannels')
 ))
+const webhookHeadersPlaceholder = computed(() => `${t('notifyPanel.webhook.headersPlaceholder')}${WEBHOOK_HEADERS_EXAMPLE}`)
+const webhookQueryPlaceholder = computed(() => `${t('notifyPanel.webhook.queryPlaceholder')}${WEBHOOK_QUERY_EXAMPLE}`)
+const webhookBodyPlaceholder = computed(() => `${t('notifyPanel.webhook.bodyPlaceholder')}${WEBHOOK_BODY_EXAMPLE}`)
+const webhookTemplateVariables = WEBHOOK_TEMPLATE_VARIABLES
 
 function updateSecretField(field: keyof NotificationSettingsUpdate, value: string) {
   mutableForm[field as string] = value
@@ -262,17 +270,20 @@ function resolveChannelBadge(channel: ChannelKey) {
         <CardContent class="grid gap-4">
           <div class="grid gap-4 md:grid-cols-2">
             <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.urlLabel') }}</Label><Input :model-value="form.WEBHOOK_URL ?? ''" :placeholder="t('notifyPanel.secretPlaceholder')" @update:model-value="(value) => updateSecretField('WEBHOOK_URL', String(value))" /></div>
-            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.headersLabel') }}</Label><Textarea :model-value="form.WEBHOOK_HEADERS ?? ''" :placeholder="t('notifyPanel.webhook.headersPlaceholder')" @update:model-value="(value) => updateSecretField('WEBHOOK_HEADERS', String(value))" /></div>
+            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.headersLabel') }}</Label><Textarea :model-value="form.WEBHOOK_HEADERS ?? ''" :placeholder="webhookHeadersPlaceholder" @update:model-value="(value) => updateSecretField('WEBHOOK_HEADERS', String(value))" /></div>
           </div>
           <div class="grid gap-4 md:grid-cols-2">
             <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.methodLabel') }}</Label><Select :model-value="form.WEBHOOK_METHOD || 'POST'" @update:model-value="(value) => updateField('WEBHOOK_METHOD', String(value))"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="POST">POST</SelectItem><SelectItem value="GET">GET</SelectItem></SelectContent></Select></div>
             <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.contentTypeLabel') }}</Label><Select :model-value="form.WEBHOOK_CONTENT_TYPE || 'JSON'" @update:model-value="(value) => updateField('WEBHOOK_CONTENT_TYPE', String(value))"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="JSON">JSON</SelectItem><SelectItem value="FORM">FORM</SelectItem></SelectContent></Select></div>
           </div>
           <div class="grid gap-4 md:grid-cols-2">
-            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.queryLabel') }}</Label><Textarea :model-value="form.WEBHOOK_QUERY_PARAMETERS ?? ''" :placeholder="t('notifyPanel.webhook.queryPlaceholder')" @update:model-value="(value) => updateField('WEBHOOK_QUERY_PARAMETERS', String(value))" /></div>
-            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.bodyLabel') }}</Label><Textarea :model-value="form.WEBHOOK_BODY ?? ''" :placeholder="t('notifyPanel.webhook.bodyPlaceholder')" @update:model-value="(value) => updateField('WEBHOOK_BODY', String(value))" /></div>
+            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.queryLabel') }}</Label><Textarea :model-value="form.WEBHOOK_QUERY_PARAMETERS ?? ''" :placeholder="webhookQueryPlaceholder" @update:model-value="(value) => updateField('WEBHOOK_QUERY_PARAMETERS', String(value))" /></div>
+            <div class="grid gap-2"><Label>{{ t('notifyPanel.webhook.bodyLabel') }}</Label><Textarea :model-value="form.WEBHOOK_BODY ?? ''" :placeholder="webhookBodyPlaceholder" @update:model-value="(value) => updateField('WEBHOOK_BODY', String(value))" /></div>
           </div>
-          <div v-pre class="rounded-2xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-700">{{ t('notifyPanel.webhook.variablesHelp') }}</div>
+          <div class="rounded-2xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-3 text-sm text-rose-700">
+            <p>{{ t('notifyPanel.webhook.variablesHelp') }}</p>
+            <p class="mt-2 break-all font-mono text-xs text-rose-900">{{ webhookTemplateVariables }}</p>
+          </div>
         </CardContent>
         <CardFooter class="justify-between"><Badge :variant="isChannelConfigured('webhook') ? 'default' : 'outline'">{{ resolveChannelBadge('webhook') }}</Badge><div class="flex gap-2"><Button variant="ghost" size="sm" :disabled="props.isSaving" @click="clearChannel('webhook')"><Trash2 class="h-4 w-4" />{{ t('notifyPanel.clear') }}</Button><Button variant="outline" size="sm" :disabled="props.isSaving" @click="handleTest('webhook')"><TestTube2 class="h-4 w-4" />{{ t('notifyPanel.test') }}</Button></div></CardFooter>
       </Card>
