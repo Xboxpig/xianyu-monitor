@@ -31,6 +31,7 @@ from src.services.notification_config_service import (
     build_notification_status_flags,
     load_notification_settings,
     model_dump,
+    prepare_notification_test_settings,
     prepare_notification_settings_update,
 )
 from src.services.notification_service import build_notification_service
@@ -147,15 +148,21 @@ async def update_notification_settings(settings: NotificationSettingsModel):
 @router.post("/notifications/test")
 async def test_notification_settings(payload: NotificationTestRequest):
     try:
-        _, _, merged_settings = prepare_notification_settings_update(
+        merged_settings = prepare_notification_test_settings(
             model_dump(payload.settings, exclude_unset=True),
             load_notification_settings(),
+            channel=payload.channel,
         )
     except NotificationSettingsValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     service = build_notification_service(merged_settings)
     if not service.clients:
+        if payload.channel:
+            raise HTTPException(
+                status_code=422,
+                detail=f"渠道 {payload.channel} 未配置或不受支持",
+            )
         raise HTTPException(status_code=422, detail="请至少配置一个可用的通知渠道")
 
     results = await service.send_test_notification()

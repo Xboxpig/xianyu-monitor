@@ -274,6 +274,53 @@ def test_notification_test_endpoint_merges_stored_secret_values(tmp_path, monkey
     assert captured["json"]["chat_id"] == "20002"
 
 
+def test_notification_test_endpoint_ignores_other_channel_dirty_fields(tmp_path, monkeypatch):
+    _clear_settings_env(monkeypatch)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "NTFY_TOPIC_URL=https://ntfy.sh/demo-topic\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(env_manager, "env_file", env_file)
+    client = _build_settings_client()
+
+    captured = []
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+    def _fake_post(url, data=None, headers=None, timeout=None, **kwargs):
+        captured.append({
+            "url": url,
+            "data": data,
+            "headers": headers,
+        })
+        return _FakeResponse()
+
+    monkeypatch.setattr("requests.post", _fake_post)
+
+    response = client.post(
+        "/api/settings/notifications/test",
+        json={
+            "channel": "ntfy",
+            "settings": {
+                "GOTIFY_URL": "not-a-url",
+                "WEBHOOK_BODY": '{"message":"{{content}}"}',
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert list(payload["results"]) == ["ntfy"]
+    assert payload["results"]["ntfy"]["success"] is True
+    assert len(captured) == 1
+    assert captured[0]["url"] == "https://ntfy.sh/demo-topic"
+
+
 def test_ai_settings_fall_back_to_runtime_environment_when_env_file_missing(tmp_path, monkeypatch):
     _clear_settings_env(monkeypatch)
     env_file = tmp_path / ".env"
