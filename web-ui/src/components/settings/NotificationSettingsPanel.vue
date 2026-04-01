@@ -113,14 +113,24 @@ function clearChannel(channel: ChannelKey) {
 }
 
 function buildPayload(): NotificationSettingsUpdate {
+  return buildScopedPayload()
+}
+
+function buildScopedPayload(channel?: ChannelKey): NotificationSettingsUpdate {
   const payload: NotificationSettingsUpdate = {}
   const mutablePayload = payload as Record<string, string | boolean | null | undefined>
+  const includedFields = channel
+    ? new Set<string>([...channelFields[channel].map((field) => field as string), 'PCURL_TO_MOBILE'])
+    : null
   const textFields: (keyof NotificationSettingsUpdate)[] = [
     'NTFY_TOPIC_URL', 'GOTIFY_URL', 'TELEGRAM_CHAT_ID', 'TELEGRAM_API_BASE_URL', 'WEBHOOK_METHOD',
     'WEBHOOK_CONTENT_TYPE', 'WEBHOOK_QUERY_PARAMETERS', 'WEBHOOK_BODY',
   ]
 
   for (const field of textFields) {
+    if (includedFields && !includedFields.has(field as string)) {
+      continue
+    }
     if (mutableClearedFields[field as string]) {
       mutablePayload[field as string] = null
       continue
@@ -133,6 +143,9 @@ function buildPayload(): NotificationSettingsUpdate {
   }
 
   for (const field of secretFields) {
+    if (includedFields && !includedFields.has(field as string)) {
+      continue
+    }
     if (mutableClearedFields[field as string]) {
       mutablePayload[field as string] = null
       continue
@@ -143,7 +156,7 @@ function buildPayload(): NotificationSettingsUpdate {
     }
   }
 
-  if (form.PCURL_TO_MOBILE !== initialValues.PCURL_TO_MOBILE) {
+  if ((!includedFields || includedFields.has('PCURL_TO_MOBILE')) && form.PCURL_TO_MOBILE !== initialValues.PCURL_TO_MOBILE) {
     payload.PCURL_TO_MOBILE = !!form.PCURL_TO_MOBILE
   }
   return payload
@@ -160,7 +173,7 @@ async function handleSave() {
 async function handleTest(channel?: ChannelKey) {
   testingChannel.value = channel ?? 'all'
   try {
-    const response = await props.testSettings({ channel, settings: buildPayload() })
+    const response = await props.testSettings({ channel, settings: buildScopedPayload(channel) })
     Object.assign(testResults, response.results)
   } finally {
     testingChannel.value = null

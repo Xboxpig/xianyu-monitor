@@ -29,6 +29,26 @@ NOTIFICATION_FIELD_MAP = {
     "PCURL_TO_MOBILE": "pcurl_to_mobile",
 }
 
+CHANNEL_NOTIFICATION_FIELDS = {
+    "ntfy": {"NTFY_TOPIC_URL"},
+    "bark": {"BARK_URL"},
+    "gotify": {"GOTIFY_URL", "GOTIFY_TOKEN"},
+    "wecom": {"WX_BOT_URL"},
+    "telegram": {
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "TELEGRAM_API_BASE_URL",
+    },
+    "webhook": {
+        "WEBHOOK_URL",
+        "WEBHOOK_METHOD",
+        "WEBHOOK_HEADERS",
+        "WEBHOOK_CONTENT_TYPE",
+        "WEBHOOK_QUERY_PARAMETERS",
+        "WEBHOOK_BODY",
+    },
+}
+
 SECRET_NOTIFICATION_FIELDS = {
     "BARK_URL",
     "GOTIFY_TOKEN",
@@ -169,11 +189,64 @@ def prepare_notification_settings_update(
     return updates, deletions, candidate_settings
 
 
+def prepare_notification_test_settings(
+    patch_payload: dict,
+    existing_settings: NotificationSettings | None = None,
+    *,
+    channel: str | None = None,
+) -> NotificationSettings:
+    if channel is None:
+        _, _, merged_settings = prepare_notification_settings_update(
+            patch_payload,
+            existing_settings,
+        )
+        return merged_settings
+
+    if channel not in CHANNEL_NOTIFICATION_FIELDS:
+        raise NotificationSettingsValidationError(f"不支持的通知渠道: {channel}")
+
+    current_settings = existing_settings or load_notification_settings()
+    included_env_fields = set(CHANNEL_NOTIFICATION_FIELDS[channel])
+    included_env_fields.add("PCURL_TO_MOBILE")
+    merged_values = _build_channel_test_values(current_settings, included_env_fields)
+
+    for env_name, raw_value in patch_payload.items():
+        if env_name not in included_env_fields:
+            continue
+        attr_name = NOTIFICATION_FIELD_MAP[env_name]
+        merged_values[attr_name] = _normalize_patch_value(env_name, raw_value)
+
+    normalized_values = _normalize_notification_values(merged_values)
+    candidate_settings = _build_notification_settings_model(normalized_values)
+    _validate_notification_settings(candidate_settings)
+    return candidate_settings
+
+
 def _notification_settings_to_values(settings: NotificationSettings) -> dict:
     return {
         attr_name: getattr(settings, attr_name)
         for attr_name in NOTIFICATION_FIELD_MAP.values()
     }
+
+
+def _build_channel_test_values(
+    settings: NotificationSettings,
+    included_env_fields: set[str],
+) -> dict:
+    values = {
+        attr_name: None
+        for attr_name in NOTIFICATION_FIELD_MAP.values()
+    }
+    values["telegram_api_base_url"] = DEFAULT_TELEGRAM_API_BASE_URL
+    values["webhook_method"] = "POST"
+    values["webhook_content_type"] = "JSON"
+    values["pcurl_to_mobile"] = True
+
+    for env_name in included_env_fields:
+        attr_name = NOTIFICATION_FIELD_MAP[env_name]
+        values[attr_name] = getattr(settings, attr_name)
+
+    return values
 
 
 def load_notification_settings() -> NotificationSettings:
