@@ -38,13 +38,16 @@ class EnvManager:
         }
 
     def get_value(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """获取单个环境变量的值，优先返回运行时环境变量"""
+        """获取单个环境变量的值，优先读取 .env，缺失时再回退到运行时环境变量"""
+        env_vars = self.read_env()
+        if key in env_vars:
+            return env_vars[key]
+
         runtime_value = os.getenv(key)
         if runtime_value is not None:
             return runtime_value
 
-        env_vars = self.read_env()
-        return env_vars.get(key, default)
+        return default
 
     def update_values(self, updates: Dict[str, str]) -> bool:
         """批量更新环境变量"""
