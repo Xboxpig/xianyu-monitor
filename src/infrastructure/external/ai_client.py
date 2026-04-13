@@ -2,6 +2,7 @@
 AI 客户端封装
 提供统一的 AI 调用接口
 """
+import ipaddress
 import os
 import json
 import base64
@@ -33,6 +34,38 @@ from src.services.ai_response_parser import (
 )
 
 
+def _sanitize_no_proxy_env() -> None:
+    """Strip CIDR prefix lengths from IPv6 entries in NO_PROXY / no_proxy.
+
+    httpx <= 0.28.1 wraps NO_PROXY IPv6 entries in brackets *including* the
+    CIDR mask (e.g. ``[::1/128]``), which the URL parser rejects as an invalid
+    port.  Stripping the ``/prefix`` part is safe because httpx doesn't
+    support CIDR range matching anyway — it only does exact-host comparison.
+
+    See https://github.com/encode/httpx/pull/3741
+    """
+    for key in ("NO_PROXY", "no_proxy"):
+        value = os.environ.get(key)
+        if not value:
+            continue
+        parts = [h.strip() for h in value.split(",")]
+        cleaned: list[str] = []
+        changed = False
+        for part in parts:
+            if "/" in part:
+                host, _, prefix = part.partition("/")
+                try:
+                    ipaddress.IPv6Address(host)
+                    cleaned.append(host)
+                    changed = True
+                    continue
+                except ValueError:
+                    pass
+            cleaned.append(part)
+        if changed:
+            os.environ[key] = ",".join(cleaned)
+
+
 class AIClient:
     """AI 客户端封装"""
 
@@ -60,6 +93,8 @@ class AIClient:
                 print(f"正在为 AI 请求使用代理: {self.settings.proxy_url}")
                 os.environ['HTTP_PROXY'] = self.settings.proxy_url
                 os.environ['HTTPS_PROXY'] = self.settings.proxy_url
+
+            _sanitize_no_proxy_env()
 
             return AsyncOpenAI(
                 api_key=self.settings.api_key,

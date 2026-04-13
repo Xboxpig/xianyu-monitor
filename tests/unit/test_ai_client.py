@@ -1,9 +1,10 @@
 import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
 
-from src.infrastructure.external.ai_client import AIClient
+from src.infrastructure.external.ai_client import AIClient, _sanitize_no_proxy_env
 from src.services.ai_request_compat import build_responses_input
 
 
@@ -244,3 +245,38 @@ def test_parse_response_uses_first_json_object_when_response_contains_multiple_o
 ```""")
 
     assert result == {"ok": True, "reason": "first"}
+
+
+# -- _sanitize_no_proxy_env tests --
+
+
+def test_sanitize_no_proxy_strips_ipv6_cidr(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.0/8,::1/128")
+    _sanitize_no_proxy_env()
+    assert os.environ["NO_PROXY"] == "localhost,127.0.0.0/8,::1"
+
+
+def test_sanitize_no_proxy_strips_lowercase_variant(monkeypatch):
+    monkeypatch.setenv("no_proxy", "localhost,::1/128,fe80::1/64")
+    _sanitize_no_proxy_env()
+    assert os.environ["no_proxy"] == "localhost,::1,fe80::1"
+
+
+def test_sanitize_no_proxy_preserves_ipv4_cidr(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "10.0.0.0/8,192.168.0.0/16")
+    _sanitize_no_proxy_env()
+    assert os.environ["NO_PROXY"] == "10.0.0.0/8,192.168.0.0/16"
+
+
+def test_sanitize_no_proxy_noop_without_env(monkeypatch):
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+    _sanitize_no_proxy_env()
+
+
+def test_sanitize_no_proxy_handles_both_keys(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "::1/128")
+    monkeypatch.setenv("no_proxy", "fe80::1/10")
+    _sanitize_no_proxy_env()
+    assert os.environ["NO_PROXY"] == "::1"
+    assert os.environ["no_proxy"] == "fe80::1"
