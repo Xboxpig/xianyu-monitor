@@ -76,7 +76,14 @@ def add_json_response_format(
 
 
 def is_json_output_unsupported_error(error: Exception) -> bool:
-    """识别模型不支持结构化 JSON 输出参数的错误。"""
+    """识别模型或网关不支持结构化 JSON 输出参数的错误。"""
+    body = getattr(error, "body", None)
+    if isinstance(body, dict) and body.get("param") in (
+        "response_format",
+        "response_format.type",
+    ):
+        return True
+
     message = str(error)
     return (
         "not supported" in message.lower()
