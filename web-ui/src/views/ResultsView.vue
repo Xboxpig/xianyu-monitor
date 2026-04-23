@@ -29,6 +29,7 @@ const {
   refreshResults,
   exportSelectedResults,
   deleteSelectedFile,
+  toggleItemBlock,
   fileOptions,
   isFileOptionsReady,
 } = useResults()
@@ -115,7 +116,7 @@ async function handleDeleteResults() {
 
     <ResultsInsightsPanel :insights="insights" :selected-task-label="selectedTaskLabel" />
 
-    <ResultsGrid :results="results" :is-loading="isLoading" />
+    <ResultsGrid :results="results" :is-loading="isLoading" @toggle-block="toggleItemBlock" />
 
     <Dialog v-model:open="isDeleteDialogOpen">
       <DialogContent class="sm:max-w-[420px]">

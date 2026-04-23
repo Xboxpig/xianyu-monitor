@@ -51,3 +51,11 @@ export function downloadResultExport(filename: string, params: GetResultContentP
   link.click()
   document.body.removeChild(link)
 }
+
+export async function updateItemStatus(filename: string, itemId: string, status: string): Promise<{ message: string; status: string }> {
+  return await http(`/api/results/${filename}/items/${itemId}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status }),
+  })
+}

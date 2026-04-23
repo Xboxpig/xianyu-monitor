@@ -199,6 +199,9 @@ const zhCN = {
       historicalLow: '历史低位',
       anonymous: '匿名',
       detail: '详情',
+      hidden: '已屏蔽',
+      block: '屏蔽',
+      unblock: '取消屏蔽',
     },
   },
   logs: {

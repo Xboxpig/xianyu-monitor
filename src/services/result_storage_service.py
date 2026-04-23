@@ -35,8 +35,11 @@ def _fallback_unique_key(record: dict, item: dict) -> str:
     return f"hash:{digest}"
 
 
-def _parse_raw_record(raw_json: str) -> dict:
-    return json.loads(raw_json)
+def _parse_raw_record(raw_json: str, *, status: str | None = None) -> dict:
+    record = json.loads(raw_json)
+    if status is not None:
+        record["_status"] = status
+    return record
 
 
 def _build_query_conditions(
@@ -51,17 +54,19 @@ def _build_query_conditions(
         conditions.append("is_recommended = 1")
         conditions.append("analysis_source = ?")
         params.append("ai")
+        conditions.append("status = 'active'")
     if keyword_recommended_only:
         conditions.append("is_recommended = 1")
         conditions.append("analysis_source = ?")
         params.append("keyword")
+        conditions.append("status = 'active'")
     return " AND ".join(conditions), params
 
 
 def _sort_expression(sort_by: str, sort_order: str) -> str:
     column = SORT_COLUMN_MAP.get(sort_by, SORT_COLUMN_MAP["crawl_time"])
     direction = "ASC" if sort_order == "asc" else "DESC"
-    return f"{column} {direction}, id {direction}"
+    return f"(CASE WHEN status = 'active' THEN 0 ELSE 1 END), {column} {direction}, id {direction}"
 
 
 async def save_result_record(record: dict, keyword: str) -> bool:
@@ -216,7 +221,7 @@ def _query_result_records_sync(
         ).fetchone()
         rows = conn.execute(
             f"""
-            SELECT raw_json
+            SELECT raw_json, status
             FROM result_items
             WHERE {where_clause}
             ORDER BY {order_clause}
@@ -225,7 +230,7 @@ def _query_result_records_sync(
             tuple(params + [limit, offset]),
         ).fetchall()
     total = int(total_row["total"]) if total_row else 0
-    return total, [_parse_raw_record(str(row["raw_json"])) for row in rows]
+    return total, [_parse_raw_record(str(row["raw_json"]), status=row["status"]) for row in rows]
 
 
 async def load_all_result_records(
@@ -263,25 +268,28 @@ def _load_all_result_records_sync(
     with sqlite_connection() as conn:
         rows = conn.execute(
             f"""
-            SELECT raw_json
+            SELECT raw_json, status
             FROM result_items
             WHERE {where_clause}
             ORDER BY {order_clause}
             """,
             tuple(params),
         ).fetchall()
-    return [_parse_raw_record(str(row["raw_json"])) for row in rows]
+    return [_parse_raw_record(str(row["raw_json"]), status=row["status"]) for row in rows]
 
 
 async def build_result_ndjson(filename: str) -> str:
-    records = await load_all_result_records(
-        filename,
-        ai_recommended_only=False,
-        keyword_recommended_only=False,
-        sort_by="crawl_time",
-        sort_order="asc",
-    )
-    return "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+    return await asyncio.to_thread(_build_result_ndjson_sync, filename)
+
+
+def _build_result_ndjson_sync(filename: str) -> str:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        rows = conn.execute(
+            "SELECT raw_json FROM result_items WHERE result_filename = ? ORDER BY id ASC",
+            (filename,),
+        ).fetchall()
+    return "\n".join(str(row["raw_json"]) for row in rows)
 
 
 async def load_result_summary(filename: str) -> dict | None:
@@ -295,9 +303,9 @@ def _load_result_summary_sync(filename: str) -> dict | None:
             """
             SELECT
                 COUNT(1) AS total_items,
-                SUM(CASE WHEN is_recommended = 1 THEN 1 ELSE 0 END) AS recommended_items,
-                SUM(CASE WHEN is_recommended = 1 AND analysis_source = 'ai' THEN 1 ELSE 0 END) AS ai_recommended_items,
-                SUM(CASE WHEN is_recommended = 1 AND analysis_source = 'keyword' THEN 1 ELSE 0 END) AS keyword_recommended_items,
+                SUM(CASE WHEN is_recommended = 1 AND status = 'active' THEN 1 ELSE 0 END) AS recommended_items,
+                SUM(CASE WHEN is_recommended = 1 AND analysis_source = 'ai' AND status = 'active' THEN 1 ELSE 0 END) AS ai_recommended_items,
+                SUM(CASE WHEN is_recommended = 1 AND analysis_source = 'keyword' AND status = 'active' THEN 1 ELSE 0 END) AS keyword_recommended_items,
                 MAX(crawl_time) AS latest_crawl_time
             FROM result_items
             WHERE result_filename = ?
@@ -309,7 +317,7 @@ def _load_result_summary_sync(filename: str) -> dict | None:
 
         latest_record = conn.execute(
             """
-            SELECT raw_json FROM result_items
+            SELECT raw_json, status FROM result_items
             WHERE result_filename = ?
             ORDER BY crawl_time DESC, id DESC
             LIMIT 1
@@ -318,8 +326,8 @@ def _load_result_summary_sync(filename: str) -> dict | None:
         ).fetchone()
         latest_recommendation = conn.execute(
             """
-            SELECT raw_json FROM result_items
-            WHERE result_filename = ? AND is_recommended = 1
+            SELECT raw_json, status FROM result_items
+            WHERE result_filename = ? AND is_recommended = 1 AND status = 'active'
             ORDER BY crawl_time DESC, id DESC
             LIMIT 1
             """,
@@ -332,11 +340,29 @@ def _load_result_summary_sync(filename: str) -> dict | None:
         "keyword_recommended_items": int(aggregate_row["keyword_recommended_items"] or 0),
         "latest_crawl_time": aggregate_row["latest_crawl_time"],
         "latest_record": (
-            _parse_raw_record(str(latest_record["raw_json"])) if latest_record else None
+            _parse_raw_record(str(latest_record["raw_json"]), status=latest_record["status"]) if latest_record else None
         ),
         "latest_recommendation": (
-            _parse_raw_record(str(latest_recommendation["raw_json"]))
+            _parse_raw_record(str(latest_recommendation["raw_json"]), status=latest_recommendation["status"])
             if latest_recommendation
             else None
         ),
     }
+
+
+async def update_item_status(filename: str, item_id: str, status: str) -> bool:
+    valid = {"active", "hidden", "expired"}
+    if status not in valid:
+        raise ValueError(f"status must be one of {valid}")
+    return await asyncio.to_thread(_update_item_status_sync, filename, item_id, status)
+
+
+def _update_item_status_sync(filename: str, item_id: str, status: str) -> bool:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE result_items SET status = ? WHERE result_filename = ? AND item_id = ?",
+            (status, filename, item_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0

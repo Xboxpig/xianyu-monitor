@@ -199,6 +199,9 @@ const enUS = {
       historicalLow: 'Historical Low',
       anonymous: 'Anonymous',
       detail: 'Open',
+      hidden: 'Hidden',
+      block: 'Block',
+      unblock: 'Unblock',
     },
   },
   logs: {
