@@ -31,7 +31,15 @@ def extract_ai_response_content(response: Any) -> str:
         if message is None:
             raise EmptyAIResponseError("AI响应缺少 message。")
         content = getattr(message, "content", None)
-        return _normalize_text_content(_coerce_content_parts(content))
+        
+        # 智谱等 OpenAI 兼容网关在某些模式下会把输出放在 reasoning_content 而非 content
+        try:
+            return _normalize_text_content(_coerce_content_parts(content))
+        except EmptyAIResponseError:
+            reasoning_content = getattr(message, "reasoning_content", None)
+            if reasoning_content:
+                return _normalize_text_content(_coerce_content_parts(reasoning_content))
+            raise
 
     raise ValueError(f"无法识别的AI响应类型: {type(response).__name__}")
 
