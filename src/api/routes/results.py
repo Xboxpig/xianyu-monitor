@@ -3,6 +3,9 @@
 """
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
+from enum import Enum
+
+from pydantic import BaseModel
 from urllib.parse import quote
 
 from src.services.price_history_service import build_price_history_insights
@@ -18,6 +21,7 @@ from src.services.result_storage_service import (
     load_all_result_records,
     query_result_records,
     result_file_exists,
+    update_item_status,
 )
 
 
@@ -163,3 +167,26 @@ async def export_result_file_content(
     export_name = filename.replace(".jsonl", ".csv")
     headers = _build_download_headers(export_name)
     return Response(content=csv_text, media_type="text/csv; charset=utf-8", headers=headers)
+
+
+class ItemStatus(str, Enum):
+    ACTIVE = "active"
+    HIDDEN = "hidden"
+    EXPIRED = "expired"
+
+
+class UpdateStatusRequest(BaseModel):
+    status: ItemStatus
+
+
+@router.patch("/{filename}/items/{item_id}/status")
+async def patch_item_status(filename: str, item_id: str, body: UpdateStatusRequest):
+    """更新指定商品的状态（active/hidden/expired）"""
+    try:
+        validate_result_filename(filename)
+        updated = await update_item_status(filename, item_id, body.status.value)
+        if not updated:
+            raise HTTPException(status_code=404, detail="商品未找到")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"message": "状态已更新", "status": body.status.value}

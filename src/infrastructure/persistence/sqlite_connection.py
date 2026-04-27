@@ -64,6 +64,7 @@ SCHEMA_STATEMENTS = (
         is_recommended INTEGER NOT NULL,
         analysis_source TEXT,
         keyword_hit_count INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
         raw_json TEXT NOT NULL,
         UNIQUE(result_filename, link_unique_key)
     )
@@ -134,7 +135,29 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 def init_schema(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
+    _migrate_result_items_status(conn)
     conn.commit()
+
+
+def _migrate_result_items_status(conn: sqlite3.Connection) -> None:
+    """为 result_items 表添加 status 列（仅执行一次）。"""
+    row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'migration:result_items_status'"
+    ).fetchone()
+    if row is not None:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(result_items)").fetchall()]
+    if "status" not in cols:
+        conn.execute(
+            "ALTER TABLE result_items ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_metadata(key, value) VALUES ('migration:result_items_status', 'done')"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_results_filename_status_crawl"
+        " ON result_items(result_filename, status, crawl_time DESC)"
+    )
 
 
 @contextmanager

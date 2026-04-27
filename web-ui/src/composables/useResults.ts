@@ -25,13 +25,24 @@ export function useResults() {
   const readyDelayMs = 200
   let readyTimer: ReturnType<typeof setTimeout> | null = null
   
-  const filters = reactive<Required<Omit<GetResultContentParams, 'page' | 'limit'>>>({
-    recommended_only: false,
-    ai_recommended_only: false,
-    keyword_recommended_only: false,
-    sort_by: 'crawl_time',
-    sort_order: 'desc',
-  })
+  const STORAGE_KEY_FILTERS = 'resultFilters'
+
+  function loadPersistedFilters(): Required<Omit<GetResultContentParams, 'page' | 'limit'>> {
+    const defaults: Required<Omit<GetResultContentParams, 'page' | 'limit'>> = {
+      recommended_only: false,
+      ai_recommended_only: false,
+      keyword_recommended_only: false,
+      sort_by: 'crawl_time',
+      sort_order: 'desc',
+    }
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_FILTERS)
+      if (saved) return { ...defaults, ...JSON.parse(saved) }
+    } catch { /* ignore */ }
+    return defaults
+  }
+
+  const filters = reactive<Required<Omit<GetResultContentParams, 'page' | 'limit'>>>(loadPersistedFilters())
 
   const isLoading = ref(false)
   const error = ref<Error | null>(null)
@@ -190,7 +201,23 @@ export function useResults() {
     }
   }
 
+  async function toggleItemBlock(item: ResultItem) {
+    if (!selectedFile.value) return
+    const itemId = item.商品信息?.商品ID
+    if (!itemId) return
+    const newStatus = item._status === 'hidden' ? 'active' : 'hidden'
+    try {
+      await resultsApi.updateItemStatus(selectedFile.value, itemId, newStatus)
+      await fetchResults()
+    } catch (e) {
+      if (e instanceof Error) error.value = e
+    }
+  }
+
   // Watchers
+  watch(filters, (val) => {
+    localStorage.setItem(STORAGE_KEY_FILTERS, JSON.stringify(val))
+  }, { deep: true })
   watch([selectedFile, filters], fetchResults, { deep: true })
   watch(selectedFile, () => {
     fetchInsights()
@@ -242,6 +269,7 @@ export function useResults() {
     refreshResults,
     exportSelectedResults,
     deleteSelectedFile,
+    toggleItemBlock,
     fileOptions,
     isFileOptionsReady,
   }

@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import Badge from '@/components/ui/badge/Badge.vue'
-import { ExternalLink, TrendingUp, TrendingDown, Info, User, Clock, CheckCircle2, XCircle, AlertCircle } from 'lucide-vue-next'
+import { ExternalLink, TrendingUp, TrendingDown, Info, User, Clock, CheckCircle2, XCircle, AlertCircle, EyeOff, Eye } from 'lucide-vue-next'
 import { formatDateTime } from '@/i18n'
 
 interface Props {
@@ -18,6 +18,9 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{
+  (e: 'toggle-block', item: ResultItem): void
+}>()
 const { t } = useI18n()
 
 const info = props.item.商品信息
@@ -37,12 +40,13 @@ const crawlTime = props.item.爬取时间
   ? formatDateTime(props.item.爬取时间, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   : t('common.unknown')
 const matchScore = ai?.value_score ?? 0
+const isHidden = computed(() => props.item._status === 'hidden')
 
 const expanded = ref(false)
 </script>
 
 <template>
-  <Card class="group flex flex-col h-full border-none shadow-glass hover:shadow-card-hover transition-all duration-300 rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm">
+  <Card class="group flex flex-col h-full border-none shadow-glass hover:shadow-card-hover transition-all duration-300 rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm" :class="{ 'opacity-50': isHidden }">
     <!-- Image Header -->
     <div class="relative aspect-[4/3] overflow-hidden">
       <div class="absolute inset-0 bg-slate-200 animate-pulse" v-if="!imageUrl"></div>
@@ -53,13 +57,26 @@ const expanded = ref(false)
         class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
         loading="lazy"
       />
+      <!-- Hidden overlay -->
+      <div v-if="isHidden" class="absolute inset-0 bg-black/30 flex items-center justify-center">
+        <span class="text-white/80 text-xs font-semibold uppercase tracking-wider">{{ t('results.card.hidden') }}</span>
+      </div>
       <!-- Overlays -->
       <div class="absolute top-3 left-3 flex gap-2">
-        <Badge v-if="isRecommended" variant="default" class="bg-emerald-500/90 backdrop-blur-md border-none shadow-sm">
+        <Badge v-if="isRecommended && !isHidden" variant="default" class="bg-emerald-500/90 backdrop-blur-md border-none shadow-sm">
           {{ t('results.card.curated') }}
         </Badge>
       </div>
-      <div class="absolute top-3 right-3">
+      <div class="absolute top-3 right-3 flex gap-1.5">
+        <button
+          type="button"
+          @click="emit('toggle-block', props.item)"
+          :aria-label="isHidden ? t('results.card.unblock') : t('results.card.block')"
+          class="flex rounded-full bg-white/30 p-1.5 text-white backdrop-blur-md border border-white/40 shadow-sm opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 hover:bg-white/50"
+        >
+          <EyeOff v-if="!isHidden" class="w-4 h-4" />
+          <Eye v-else class="w-4 h-4" />
+        </button>
          <a
            :href="info.商品链接"
            target="_blank"

@@ -101,4 +101,5 @@ export interface ResultItem {
   "卖家信息": SellerInfo;
   ai_analysis: AiAnalysis;
   price_insight?: PriceInsight;
+  _status?: 'active' | 'hidden' | 'expired';
 }
