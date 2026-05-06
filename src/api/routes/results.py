@@ -19,8 +19,11 @@ from src.services.result_storage_service import (
     delete_result_file_records,
     list_result_filenames,
     load_all_result_records,
+    load_result_blacklist_keywords,
+    load_visible_result_item_ids,
     query_result_records,
     result_file_exists,
+    save_result_blacklist_keywords,
     update_item_status,
 )
 
@@ -84,6 +87,7 @@ async def get_result_file_content(
     recommended_only: bool = Query(False),  # 兼容旧参数，等价于 ai_recommended_only
     ai_recommended_only: bool = Query(False),
     keyword_recommended_only: bool = Query(False),
+    include_hidden: bool = Query(False),
     sort_by: str = Query("crawl_time"),
     sort_order: str = Query("desc"),
 ):
@@ -104,6 +108,7 @@ async def get_result_file_content(
             sort_order=sort_order,
             page=page,
             limit=limit,
+            include_hidden=include_hidden,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -126,7 +131,8 @@ async def get_result_file_insights(filename: str):
     try:
         validate_result_filename(filename)
         keyword = filename.replace("_full_data.jsonl", "")
-        return build_price_history_insights(keyword)
+        visible_item_ids = load_visible_result_item_ids(filename)
+        return build_price_history_insights(keyword, visible_item_ids=visible_item_ids)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -137,6 +143,7 @@ async def export_result_file_content(
     recommended_only: bool = Query(False),
     ai_recommended_only: bool = Query(False),
     keyword_recommended_only: bool = Query(False),
+    include_hidden: bool = Query(False),
     sort_by: str = Query("crawl_time"),
     sort_order: str = Query("desc"),
 ):
@@ -153,6 +160,7 @@ async def export_result_file_content(
             keyword_recommended_only=keyword_recommended_only,
             sort_by=sort_by,
             sort_order=sort_order,
+            include_hidden=include_hidden,
         )
         csv_text = build_results_csv(
             enrich_records_with_price_insight(results, filename)
@@ -179,6 +187,10 @@ class UpdateStatusRequest(BaseModel):
     status: ItemStatus
 
 
+class BlacklistRulesRequest(BaseModel):
+    keywords: list[str]
+
+
 @router.patch("/{filename}/items/{item_id}/status")
 async def patch_item_status(filename: str, item_id: str, body: UpdateStatusRequest):
     """更新指定商品的状态（active/hidden/expired）"""
@@ -190,3 +202,23 @@ async def patch_item_status(filename: str, item_id: str, body: UpdateStatusReque
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"message": "状态已更新", "status": body.status.value}
+
+
+@router.get("/{filename}/blacklist-rules")
+async def get_result_blacklist_rules(filename: str):
+    try:
+        validate_result_filename(filename)
+        keywords = await load_result_blacklist_keywords(filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"keywords": keywords}
+
+
+@router.put("/{filename}/blacklist-rules")
+async def put_result_blacklist_rules(filename: str, body: BlacklistRulesRequest):
+    try:
+        validate_result_filename(filename)
+        keywords = await save_result_blacklist_keywords(filename, body.keywords)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"message": "黑名单规则已更新", "keywords": keywords}

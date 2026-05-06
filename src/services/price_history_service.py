@@ -275,6 +275,7 @@ def build_item_price_context(
     *,
     item_id: str,
     current_price: Optional[float],
+    market_snapshots: Optional[list[dict]] = None,
 ) -> dict:
     if not item_id:
         return {"observation_count": 0, "deal_score": None, "deal_label": "暂无数据"}
@@ -286,9 +287,10 @@ def build_item_price_context(
     latest_item_snapshot = item_snapshots[-1]
     price_now = current_price if current_price is not None else parse_price_value(latest_item_snapshot.get("price"))
     historical_prices = [float(record["price"]) for record in item_snapshots if parse_price_value(record.get("price")) is not None]
-    latest_run_id = str(snapshots[-1].get("run_id") or "")
+    source_snapshots = market_snapshots if market_snapshots is not None else snapshots
+    latest_run_id = str(source_snapshots[-1].get("run_id") or "") if source_snapshots else ""
     latest_market = _dedupe_latest(
-        [record for record in snapshots if str(record.get("run_id") or "") == latest_run_id],
+        [record for record in source_snapshots if str(record.get("run_id") or "") == latest_run_id],
         "item_id",
     )
     market_summary = _summarize_prices(latest_market)
@@ -363,8 +365,15 @@ def build_price_history_insights(
     keyword: str,
     *,
     window_days: int = DEFAULT_HISTORY_WINDOW_DAYS,
+    visible_item_ids: Optional[set[str]] = None,
 ) -> dict:
     snapshots = load_price_snapshots(keyword)
+    if visible_item_ids is not None:
+        snapshots = [
+            snapshot
+            for snapshot in snapshots
+            if str(snapshot.get("item_id") or "") in visible_item_ids
+        ]
     if not snapshots:
         return {
             "market_summary": _summarize_prices([]),

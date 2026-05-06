@@ -6,6 +6,7 @@ import ResultsFilterBar from '@/components/results/ResultsFilterBar.vue'
 import ResultsGrid from '@/components/results/ResultsGrid.vue'
 import ResultsInsightsPanel from '@/components/results/ResultsInsightsPanel.vue'
 import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/components/ui/toast'
 import {
   Dialog,
@@ -30,11 +31,16 @@ const {
   exportSelectedResults,
   deleteSelectedFile,
   toggleItemBlock,
+  blacklistKeywords,
+  isSavingBlacklist,
+  saveBlacklistRules,
   fileOptions,
   isFileOptionsReady,
 } = useResults()
 
 const isDeleteDialogOpen = ref(false)
+const isBlacklistDialogOpen = ref(false)
+const blacklistDraft = ref('')
 
 const selectedTaskLabel = computed(() => {
   if (!selectedFile.value || fileOptions.value.length === 0) return null
@@ -58,6 +64,18 @@ function openDeleteDialog() {
     return
   }
   isDeleteDialogOpen.value = true
+}
+
+function openBlacklistDialog() {
+  if (!selectedFile.value) {
+    toast({
+      title: t('results.filters.noResultSelected'),
+      variant: 'destructive',
+    })
+    return
+  }
+  blacklistDraft.value = blacklistKeywords.value.join('\n')
+  isBlacklistDialogOpen.value = true
 }
 
 function handleExportResults() {
@@ -86,6 +104,27 @@ async function handleDeleteResults() {
     isDeleteDialogOpen.value = false
   }
 }
+
+function parseBlacklistKeywords(input: string) {
+  return input
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+async function handleSaveBlacklistRules() {
+  try {
+    await saveBlacklistRules(parseBlacklistKeywords(blacklistDraft.value))
+    toast({ title: t('results.filters.blacklistSaved') })
+    isBlacklistDialogOpen.value = false
+  } catch (e) {
+    toast({
+      title: t('results.filters.blacklistSaveFailed'),
+      description: (e as Error).message,
+      variant: 'destructive',
+    })
+  }
+}
 </script>
 
 <template>
@@ -106,10 +145,12 @@ async function handleDeleteResults() {
       v-model:selectedFile="selectedFile"
       v-model:aiRecommendedOnly="filters.ai_recommended_only"
       v-model:keywordRecommendedOnly="filters.keyword_recommended_only"
+      v-model:includeHidden="filters.include_hidden"
       v-model:sortBy="filters.sort_by"
       v-model:sortOrder="filters.sort_order"
       :is-loading="isLoading"
       @refresh="refreshResults"
+      @manage-blacklist="openBlacklistDialog"
       @export="handleExportResults"
       @delete="openDeleteDialog"
     />
@@ -130,6 +171,36 @@ async function handleDeleteResults() {
           <Button variant="outline" @click="isDeleteDialogOpen = false">{{ t('common.cancel') }}</Button>
           <Button variant="destructive" :disabled="isLoading" @click="handleDeleteResults">
             {{ t('results.filters.confirmDelete') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="isBlacklistDialogOpen">
+      <DialogContent class="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>{{ t('results.filters.blacklistDialogTitle') }}</DialogTitle>
+          <DialogDescription>
+            {{ t('results.filters.blacklistDialogDescription') }}
+          </DialogDescription>
+        </DialogHeader>
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-slate-700">
+            {{ t('results.filters.blacklistRulesLabel') }}
+          </label>
+          <Textarea
+            v-model="blacklistDraft"
+            class="min-h-[180px]"
+            :placeholder="t('results.filters.blacklistRulesPlaceholder')"
+          />
+          <p class="text-xs leading-5 text-slate-500">
+            {{ t('results.filters.blacklistRulesHint') }}
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="isBlacklistDialogOpen = false">{{ t('common.cancel') }}</Button>
+          <Button :disabled="isSavingBlacklist" @click="handleSaveBlacklistRules">
+            {{ t('results.filters.confirmBlacklistSave') }}
           </Button>
         </DialogFooter>
       </DialogContent>

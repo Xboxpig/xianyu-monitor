@@ -5,6 +5,7 @@ export interface GetResultContentParams {
   recommended_only?: boolean;
   ai_recommended_only?: boolean;
   keyword_recommended_only?: boolean;
+  include_hidden?: boolean;
   sort_by?: 'crawl_time' | 'publish_time' | 'price' | 'keyword_hit_count';
   sort_order?: 'asc' | 'desc';
   page?: number;
@@ -29,6 +30,18 @@ export async function getResultContent(
 
 export async function getResultInsights(filename: string): Promise<ResultInsights> {
   return await http(`/api/results/${filename}/insights`)
+}
+
+export async function getResultBlacklistRules(filename: string): Promise<{ keywords: string[] }> {
+  return await http(`/api/results/${filename}/blacklist-rules`)
+}
+
+export async function updateResultBlacklistRules(filename: string, keywords: string[]): Promise<{ message: string; keywords: string[] }> {
+  return await http(`/api/results/${filename}/blacklist-rules`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ keywords }),
+  })
 }
 
 export function buildResultExportUrl(filename: string, params: GetResultContentParams = {}): string {
