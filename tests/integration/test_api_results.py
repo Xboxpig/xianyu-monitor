@@ -236,3 +236,181 @@ def test_results_export_csv_supports_unicode_filename(tmp_path, monkeypatch):
     disposition = export_resp.headers["content-disposition"]
     assert 'filename="export.csv"' in disposition
     assert "filename*=UTF-8''%E6%BC%94%E7%A4%BA_full_data.csv" in disposition
+
+
+def test_results_blacklist_rules_hide_items_from_view_and_insights(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    jsonl_dir = tmp_path / "jsonl"
+    jsonl_dir.mkdir(parents=True, exist_ok=True)
+    target_file = jsonl_dir / "macbook_air_m1_full_data.jsonl"
+
+    records = [
+        {
+            "爬取时间": "2026-01-03T09:00:00",
+            "搜索关键字": "MacBook Air M1",
+            "任务名称": "MacBook Air M1 监控",
+            "商品信息": {
+                "商品ID": "2001",
+                "商品标题": "MacBook Air M1 8+256",
+                "商品链接": "https://www.goofish.com/item?id=2001",
+                "当前售价": "¥4200",
+                "发布时间": "2026-01-03 08:30",
+            },
+            "卖家信息": {"卖家昵称": "卖家A"},
+            "ai_analysis": {
+                "analysis_source": "ai",
+                "is_recommended": True,
+                "reason": "符合目标机型",
+            },
+        },
+        {
+            "爬取时间": "2026-01-03T09:05:00",
+            "搜索关键字": "MacBook Air M1",
+            "任务名称": "MacBook Air M1 监控",
+            "商品信息": {
+                "商品ID": "2002",
+                "商品标题": "MacBook Air Intel i5 8+256",
+                "商品链接": "https://www.goofish.com/item?id=2002",
+                "当前售价": "¥3100",
+                "发布时间": "2026-01-03 08:35",
+            },
+            "卖家信息": {"卖家昵称": "卖家B"},
+            "ai_analysis": {
+                "analysis_source": "ai",
+                "is_recommended": False,
+                "reason": "不是目标机型",
+            },
+        },
+        {
+            "爬取时间": "2026-01-03T09:10:00",
+            "搜索关键字": "MacBook Air M1",
+            "任务名称": "MacBook Air M1 监控",
+            "商品信息": {
+                "商品ID": "2003",
+                "商品标题": "MacBook Pro Intel 13寸",
+                "商品链接": "https://www.goofish.com/item?id=2003",
+                "当前售价": "¥3600",
+                "发布时间": "2026-01-03 08:40",
+            },
+            "卖家信息": {"卖家昵称": "卖家C"},
+            "ai_analysis": {
+                "analysis_source": "ai",
+                "is_recommended": False,
+                "reason": "不是 Air M1",
+            },
+        },
+    ]
+    _write_jsonl(target_file, records)
+
+    record_market_snapshots(
+        keyword="MacBook Air M1",
+        task_name="MacBook Air M1 监控",
+        items=[
+            {
+                "商品ID": "2001",
+                "商品标题": "MacBook Air M1 8+256",
+                "当前售价": "¥4300",
+                "商品链接": "https://www.goofish.com/item?id=2001",
+            },
+            {
+                "商品ID": "2002",
+                "商品标题": "MacBook Air Intel i5 8+256",
+                "当前售价": "¥3200",
+                "商品链接": "https://www.goofish.com/item?id=2002",
+            },
+            {
+                "商品ID": "2003",
+                "商品标题": "MacBook Pro Intel 13寸",
+                "当前售价": "¥3700",
+                "商品链接": "https://www.goofish.com/item?id=2003",
+            },
+        ],
+        run_id="run-1",
+        snapshot_time="2026-01-02T10:00:00",
+        seen_item_ids=set(),
+    )
+    record_market_snapshots(
+        keyword="MacBook Air M1",
+        task_name="MacBook Air M1 监控",
+        items=[
+            {
+                "商品ID": "2001",
+                "商品标题": "MacBook Air M1 8+256",
+                "当前售价": "¥4200",
+                "商品链接": "https://www.goofish.com/item?id=2001",
+            },
+            {
+                "商品ID": "2002",
+                "商品标题": "MacBook Air Intel i5 8+256",
+                "当前售价": "¥3100",
+                "商品链接": "https://www.goofish.com/item?id=2002",
+            },
+            {
+                "商品ID": "2003",
+                "商品标题": "MacBook Pro Intel 13寸",
+                "当前售价": "¥3600",
+                "商品链接": "https://www.goofish.com/item?id=2003",
+            },
+        ],
+        run_id="run-2",
+        snapshot_time="2026-01-03T10:00:00",
+        seen_item_ids=set(),
+    )
+
+    app = FastAPI()
+    app.include_router(results.router)
+    client = TestClient(app)
+
+    update_rules_resp = client.put(
+        "/api/results/macbook_air_m1_full_data.jsonl/blacklist-rules",
+        json={"keywords": ["intel"]},
+    )
+    assert update_rules_resp.status_code == 200
+    assert update_rules_resp.json()["keywords"] == ["intel"]
+
+    rules_resp = client.get("/api/results/macbook_air_m1_full_data.jsonl/blacklist-rules")
+    assert rules_resp.status_code == 200
+    assert rules_resp.json()["keywords"] == ["intel"]
+
+    filtered_resp = client.get("/api/results/macbook_air_m1_full_data.jsonl")
+    assert filtered_resp.status_code == 200
+    filtered_payload = filtered_resp.json()
+    assert filtered_payload["total_items"] == 1
+    assert [item["商品信息"]["商品ID"] for item in filtered_payload["items"]] == ["2001"]
+
+    include_hidden_resp = client.get(
+        "/api/results/macbook_air_m1_full_data.jsonl",
+        params={"include_hidden": True},
+    )
+    assert include_hidden_resp.status_code == 200
+    include_hidden_payload = include_hidden_resp.json()
+    assert include_hidden_payload["total_items"] == 3
+    hidden_item = next(
+        item for item in include_hidden_payload["items"]
+        if item["商品信息"]["商品ID"] == "2002"
+    )
+    assert hidden_item["_hidden_reason"] == "rule"
+    assert hidden_item["_matched_blacklist_keywords"] == ["intel"]
+
+    insights_resp = client.get("/api/results/macbook_air_m1_full_data.jsonl/insights")
+    assert insights_resp.status_code == 200
+    insights = insights_resp.json()
+    assert insights["market_summary"]["sample_count"] == 1
+    assert insights["market_summary"]["avg_price"] == 4200.0
+    assert all(point["sample_count"] == 1 for point in insights["daily_trend"])
+
+    list_resp = client.get("/api/results/macbook_air_m1_full_data.jsonl")
+    assert list_resp.status_code == 200
+    visible_item = list_resp.json()["items"][0]
+    assert visible_item["price_insight"]["market_avg_price"] == 4200.0
+
+    export_resp = client.get("/api/results/macbook_air_m1_full_data.jsonl/export")
+    assert export_resp.status_code == 200
+    assert "MacBook Air M1 8+256" in export_resp.text
+    assert "MacBook Air Intel i5 8+256" not in export_resp.text
+    assert "MacBook Pro Intel 13寸" not in export_resp.text
+
+    download_resp = client.get("/api/results/files/macbook_air_m1_full_data.jsonl")
+    assert download_resp.status_code == 200
+    assert "MacBook Air Intel i5 8+256" in download_resp.text
+    assert "MacBook Pro Intel 13寸" in download_resp.text

@@ -40,7 +40,14 @@ const crawlTime = props.item.爬取时间
   ? formatDateTime(props.item.爬取时间, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   : t('common.unknown')
 const matchScore = ai?.value_score ?? 0
-const isHidden = computed(() => props.item._status === 'hidden')
+const isHidden = computed(() => props.item._effective_hidden === true || props.item._status === 'hidden')
+const isRuleHidden = computed(() => props.item._hidden_reason === 'rule')
+const canToggleBlock = computed(() => props.item._hidden_reason !== 'rule' && props.item._hidden_reason !== 'expired')
+const hiddenLabel = computed(() => {
+  if (props.item._hidden_reason === 'rule') return t('results.card.blacklisted')
+  if (props.item._hidden_reason === 'expired') return t('results.card.expired')
+  return t('results.card.hidden')
+})
 
 const expanded = ref(false)
 </script>
@@ -59,16 +66,20 @@ const expanded = ref(false)
       />
       <!-- Hidden overlay -->
       <div v-if="isHidden" class="absolute inset-0 bg-black/30 flex items-center justify-center">
-        <span class="text-white/80 text-xs font-semibold uppercase tracking-wider">{{ t('results.card.hidden') }}</span>
+        <span class="text-white/80 text-xs font-semibold uppercase tracking-wider">{{ hiddenLabel }}</span>
       </div>
       <!-- Overlays -->
       <div class="absolute top-3 left-3 flex gap-2">
         <Badge v-if="isRecommended && !isHidden" variant="default" class="bg-emerald-500/90 backdrop-blur-md border-none shadow-sm">
           {{ t('results.card.curated') }}
         </Badge>
+        <Badge v-if="isRuleHidden" variant="secondary" class="bg-slate-900/75 text-white border-none backdrop-blur-md shadow-sm">
+          {{ t('results.card.blacklisted') }}
+        </Badge>
       </div>
       <div class="absolute top-3 right-3 flex gap-1.5">
         <button
+          v-if="canToggleBlock"
           type="button"
           @click="emit('toggle-block', props.item)"
           :aria-label="isHidden ? t('results.card.unblock') : t('results.card.block')"

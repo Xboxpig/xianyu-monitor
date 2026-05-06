@@ -90,6 +90,13 @@ SCHEMA_STATEMENTS = (
         UNIQUE(keyword_slug, run_id, item_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS result_blacklist_rules (
+        result_filename TEXT PRIMARY KEY,
+        blacklist_keywords_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_tasks_name ON tasks(task_name)",
     """
     CREATE INDEX IF NOT EXISTS idx_results_filename_crawl

@@ -102,4 +102,7 @@ export interface ResultItem {
   ai_analysis: AiAnalysis;
   price_insight?: PriceInsight;
   _status?: 'active' | 'hidden' | 'expired';
+  _effective_hidden?: boolean;
+  _hidden_reason?: 'manual' | 'rule' | 'expired' | null;
+  _matched_blacklist_keywords?: string[];
 }
