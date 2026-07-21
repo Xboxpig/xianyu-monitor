@@ -2,7 +2,7 @@
 
 [中文] ｜ [English](README_EN.md)
 
-基于 Playwright 和 AI 的闲鱼多任务实时监控，提供完整的 Web 管理界面。
+私人闲鱼监控系统，提供完整的 Web 管理界面。
 
 
 ## 核心特性
@@ -26,7 +26,6 @@
 ## 🐳 Docker 部署（推荐）
 
 ```bash
-git clone https://github.com/Usagi-org/ai-goofish-monitor && cd ai-goofish-monitor
 cp .env.example .env
 vim .env # 填写相关配置项
 docker compose up -d
@@ -132,8 +131,7 @@ docker compose up -d
 - Chrome / Edge 浏览器（Linux 环境也可使用 Chromium；`start.sh` 会先检查浏览器是否存在）
 
 ```bash
-git clone https://github.com/Usagi-org/ai-goofish-monitor
-cd ai-goofish-monitor
+cd xianyu-monitor
 cp .env.example .env
 ```
 
@@ -293,13 +291,9 @@ AI 模式会先生成分析标准，再创建任务。现在该流程已改为�
 
 本项目在开发过程中参考了以下优秀项目，特此感谢：
 
-- [superboyyy/xianyu_spider](https://github.com/superboyyy/xianyu_spider)
 
-以及感谢LinuxDo相关人员的脚本贡献
 
-- [@jooooody](https://linux.do/u/jooooody/summary)
 
-以及感谢 [LinuxDo](https://linux.do/) 社区。
 
 以及感谢 ClaudeCode/Gemini/Codex 等模型工具，解放双手 体验Vibe Coding的快乐。
 
@@ -321,6 +315,5 @@ AI 模式会先生成分析标准，再创建任务。现在该流程已改为�
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Usagi-org/ai-goofish-monitor&type=Date)](https://www.star-history.com/#Usagi-org/ai-goofish-monitor&Date)
 
 ![Alt](https://repobeats.axiom.co/api/embed/b40d8a112271b4bddabadd8fe2635be3c1aa28a3.svg "Repobeats analytics image")

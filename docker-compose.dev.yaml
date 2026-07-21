@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    container_name: ai-goofish-monitor-app
+    container_name: xianyu-monitor-app
     init: true
     ports:
       - "8000:8000"

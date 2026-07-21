@@ -33,8 +33,7 @@ A Playwright and AI-powered multi-task real-time monitoring tool for Xianyu (闲
 - Chrome or Edge on desktop systems. On Linux, Chromium also works. `start.sh` checks this prerequisite before continuing
 
 ```bash
-git clone https://github.com/Usagi-org/ai-goofish-monitor
-cd ai-goofish-monitor
+cd xianyu-monitor
 cp .env.example .env
 ```
 
@@ -74,7 +73,6 @@ chmod +x start.sh
 ## 🐳 Docker Deployment (Recommended)
 
 ```bash
-git clone https://github.com/Usagi-org/ai-goofish-monitor && cd ai-goofish-monitor
 cp .env.example .env
 vim .env # fill in the required values
 docker compose up -d
@@ -278,13 +276,9 @@ The script performs a prerequisite check before installing project dependencies.
 
 This project referenced the following excellent projects during development. Special thanks to:
 
-- [superboyyy/xianyu_spider](https://github.com/superboyyy/xianyu_spider)
 
-Also thanks to LinuxDo contributors for script contributions:
 
-- [@jooooody](https://linux.do/u/jooooody/summary)
 
-And thanks to the [LinuxDo](https://linux.do/) community.
 
 Also thanks to ClaudeCode/Gemini/Codex and other model tools for freeing our hands and experiencing the joy of Vibe Coding.
 
@@ -306,4 +300,3 @@ Also thanks to ClaudeCode/Gemini/Codex and other model tools for freeing our han
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=Usagi-org/ai-goofish-monitor&type=Date)](https://www.star-history.com/#Usagi-org/ai-goofish-monitor&Date)
