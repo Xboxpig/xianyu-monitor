@@ -15,3 +15,10 @@ prompts/
 .serena/
 price_history/
 data/
+venv/
+data/
+state/
+logs/
+images/
+*.sqlite3
+.env
