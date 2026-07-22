@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Button } from '@/components/ui/button'
 import DashboardTaskSearch from '@/components/layout/DashboardTaskSearch.vue'
 import LocaleToggle from '@/components/layout/LocaleToggle.vue'
-import { 
+import {
   Zap, 
   Bell, 
   Search, 
@@ -12,7 +12,6 @@ import {
   HelpCircle,
   Menu
 } from 'lucide-vue-next'
-import Badge from '@/components/ui/badge/Badge.vue'
 import { useMobileNav } from '@/composables/useMobileNav'
 import { useI18n } from 'vue-i18n'
 
@@ -49,14 +48,9 @@ function goPrompts() {
         <Zap class="w-5 h-5 text-white fill-white" />
       </div>
       <h1 class="text-lg font-black text-slate-800 tracking-tighter">
-        AI <span class="text-primary">Xianyu</span> Hunter
+        xiaolin-xianyu-max
       </h1>
-      <Badge variant="outline" class="ml-2 text-[10px] font-bold border-primary/20 text-primary bg-primary/5 uppercase tracking-widest hidden sm:flex">
-        PRO
-      </Badge>
     </RouterLink>
-
-    <!-- Search & Navigation -->
     <div class="hidden md:flex flex-grow max-w-md mx-8">
       <DashboardTaskSearch v-if="isDashboard" />
       <div v-else class="relative w-full group">

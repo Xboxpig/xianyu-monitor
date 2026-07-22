@@ -11,6 +11,7 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
+from playwright_stealth import Stealth
 
 from src.ai_handler import (
     download_all_images,
@@ -248,7 +249,7 @@ def _get_seller_profile_cache_ttl(task_config: dict) -> int:
 
 def _default_context_options() -> dict:
     return {
-        "user_agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+        "user_agent": "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36",
         "viewport": {"width": 412, "height": 915},
         "device_scale_factor": 2.625,
         "is_mobile": True,
@@ -549,14 +550,13 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         except Exception as e:
             print(f"警告：读取登录状态文件失败，将直接按路径使用: {e}")
 
-        async with async_playwright() as p:
+        async with Stealth().use_async(async_playwright()) as p:
             # 反检测启动参数
             launch_args = [
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-web-security",
                 "--disable-features=IsolateOrigins,site-per-process",
             ]
 
@@ -586,6 +586,10 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         context_kwargs["extra_http_headers"] = extra_headers
                 else:
                     storage_state_arg = snapshot_data
+            elif isinstance(snapshot_data, list):
+                # 兼容纯 Cookie 数组格式（如 EditThisCookie 导出）
+                print(f"检测到纯 Cookie 数组格式，自动转换: {state_file}")
+                storage_state_arg = {"cookies": snapshot_data, "origins": []}
 
             context_kwargs = _clean_kwargs(context_kwargs)
             context = await browser.new_context(
@@ -615,12 +619,22 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 // 模拟真实移动设备的navigator属性
                 Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
                 Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en-US', 'en']});
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+                Object.defineProperty(navigator, 'platform', {get: () => 'Linux armv8l'});
+                Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 5});
+
+                // 模拟网络连接
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g', rtt: 100, downlink: 10,
+                        saveData: false, addEventListener: () => {},
+                        removeEventListener: () => {},
+                    })
+                });
 
                 // 添加chrome对象
                 window.chrome = {runtime: {}, loadTimes: function() {}, csi: function() {}};
-
-                // 模拟触摸支持
-                Object.defineProperty(navigator, 'maxTouchPoints', {get: () => 5});
 
                 // 覆盖permissions查询（避免暴露自动化）
                 const originalQuery = window.navigator.permissions.query;
@@ -629,6 +643,14 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         Promise.resolve({state: Notification.permission}) :
                         originalQuery(parameters)
                 );
+
+                // 覆盖WebGL指纹
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(p) {
+                    if (p === 37445) return 'Google Inc. (NVIDIA)';
+                    if (p === 37446) return 'NVIDIA Tegra';
+                    return getParameter.call(this, p);
+                };
             """)
 
             page = await context.new_page()
@@ -972,7 +994,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                             f"[页内进度 {i}/{total_items_on_page}] 发现新商品，获取详情: {item_data['商品标题'][:30]}..."
                         )
                         # --- 修改: 访问详情页前的等待时间，模拟用户在列表页上看了一会儿 ---
-                        await random_sleep(2, 4)  # 原来是 (2, 4)
+                        await random_sleep(5, 10)  # 调大: 访问详情页前多停一会
 
                         detail_page = await context.new_page()
                         try:
@@ -999,7 +1021,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                     print(
                                         "检测到闲鱼反爬虫验证 (FAIL_SYS_USER_VALIDATE)，程序将终止。"
                                     )
-                                    long_sleep_duration = random.randint(3, 60)
+                                    long_sleep_duration = random.randint(180, 300)  # 调大: 3-5分钟
                                     print(
                                         f"为避免账户风险，将执行一次长时间休眠 ({long_sleep_duration} 秒) 后再退出..."
                                     )
@@ -1110,7 +1132,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                 log_time(
                                     "[反爬] 执行一次主要的随机延迟以模拟用户浏览间隔..."
                                 )
-                                await random_sleep(5, 10)
+                                await random_sleep(8, 15)  # 调大: 商品间延迟
                             else:
                                 print(
                                     f"   错误: 获取商品详情API响应失败，状态码: {detail_response.status}"
@@ -1134,14 +1156,14 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         finally:
                             await detail_page.close()
                             # --- 修改: 增加关闭页面后的短暂整理时间 ---
-                            await random_sleep(2, 4)  # 原来是 (1, 2.5)
+                            await random_sleep(4, 8)  # 调大: 关闭详情页后延迟
 
                     # --- 新增: 在处理完一页所有商品后，翻页前，增加一个更长的“休息”时间 ---
                     if not stop_scraping and page_num < max_pages:
                         print(
                             f"--- 第 {page_num} 页处理完毕，准备翻页。执行一次页面间的长时休息... ---"
                         )
-                        await random_sleep(10, 15)
+                        await random_sleep(20, 30)  # 调大: 翻页间隔
 
             except PlaywrightTimeoutError as e:
                 if _is_login_url(page.url):
