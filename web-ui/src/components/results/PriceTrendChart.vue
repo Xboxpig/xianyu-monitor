@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { createChart, LineSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts'
 
 interface TrendPoint {
   day: string
@@ -11,125 +11,118 @@ interface TrendPoint {
 const props = defineProps<{
   points: TrendPoint[]
 }>()
-const { t } = useI18n()
 
-const chartWidth = 720
-const chartHeight = 220
-const padding = 24
+const chartContainer = ref<HTMLDivElement>()
+const hasData = ref(false)
+let chart: IChartApi | null = null
+let avgSeries: ISeriesApi<'Line'> | null = null
+let medianSeries: ISeriesApi<'Line'> | null = null
 
-const validPoints = computed(() =>
-  props.points.filter((point) => point.avg_price !== null && point.avg_price !== undefined)
-)
-
-const valueRange = computed(() => {
-  const values = validPoints.value
-    .flatMap((point) => [point.avg_price, point.median_price])
-    .filter((value): value is number => typeof value === 'number')
-  if (values.length === 0) {
-    return { min: 0, max: 1 }
-  }
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  if (min === max) {
-    return { min: min - 1, max: max + 1 }
-  }
-  return { min, max }
-})
-
-function resolveX(index: number) {
-  if (validPoints.value.length <= 1) return chartWidth / 2
-  const usableWidth = chartWidth - padding * 2
-  return padding + (usableWidth / (validPoints.value.length - 1)) * index
+function toChartData(points: TrendPoint[], field: 'avg_price' | 'median_price') {
+  return points
+    .filter(p => p[field] !== null && p[field] !== undefined)
+    .map(p => ({ time: p.day, value: p[field] as number }))
 }
 
-function resolveY(value: number) {
-  const usableHeight = chartHeight - padding * 2
-  const ratio = (value - valueRange.value.min) / (valueRange.value.max - valueRange.value.min)
-  return chartHeight - padding - ratio * usableHeight
-}
+function renderChart(points: TrendPoint[]) {
+  if (!chart) return
+  const valid = points.filter(p => p.avg_price !== null)
+  hasData.value = valid.length > 0
 
-function buildPath(values: Array<number | null>) {
-  const commands = values
-    .map((value, index) => {
-      if (value === null || value === undefined) return null
-      const prefix = index === 0 ? 'M' : 'L'
-      return `${prefix} ${resolveX(index)} ${resolveY(value)}`
+  if (!hasData.value) return
+
+  if (!avgSeries) {
+    avgSeries = chart.addSeries(LineSeries, {
+      color: '#EA580C',
+      lineWidth: 3,
+      lastValueVisible: true,
+      priceFormat: { type: 'price', precision: 0, minMove: 1 },
     })
-    .filter(Boolean)
-  return commands.join(' ')
+  }
+  avgSeries.setData(toChartData(points, 'avg_price'))
+
+  if (!medianSeries) {
+    medianSeries = chart.addSeries(LineSeries, {
+      color: '#F59E0B',
+      lineWidth: 2,
+      lineStyle: 2,
+      lastValueVisible: true,
+      priceFormat: { type: 'price', precision: 0, minMove: 1 },
+    })
+  }
+  medianSeries.setData(toChartData(points, 'median_price'))
+
+  chart.timeScale().fitContent()
 }
 
-const avgPath = computed(() => buildPath(validPoints.value.map((point) => point.avg_price)))
-const medianPath = computed(() => buildPath(validPoints.value.map((point) => point.median_price)))
-const areaPath = computed(() => {
-  if (!avgPath.value || validPoints.value.length === 0) return ''
-  const firstX = resolveX(0)
-  const lastX = resolveX(validPoints.value.length - 1)
-  const baseline = chartHeight - padding
-  return `${avgPath.value} L ${lastX} ${baseline} L ${firstX} ${baseline} Z`
+onMounted(() => {
+  if (!chartContainer.value) return
+
+  chart = createChart(chartContainer.value, {
+    layout: {
+      background: { type: 'solid', color: 'transparent' },
+      textColor: '#64748b',
+    },
+    grid: {
+      vertLines: { color: '#e2e8f0', style: 2 },
+      horzLines: { color: '#e2e8f0', style: 2 },
+    },
+    crosshair: {
+      vertLine: { labelBackgroundColor: '#EA580C' },
+      horzLine: { labelBackgroundColor: '#EA580C' },
+    },
+    rightPriceScale: { borderColor: '#e2e8f0' },
+    timeScale: { borderColor: '#e2e8f0', timeVisible: false },
+    height: 220,
+    width: chartContainer.value.clientWidth || 720,
+    handleScroll: false,
+    handleScale: false,
+  })
+
+  renderChart(props.points)
+
+  const resizeHandler = () => {
+    if (!chart || !chartContainer.value) return
+    chart.resize(chartContainer.value.clientWidth, 220)
+  }
+  window.addEventListener('resize', resizeHandler)
+
+  onUnmounted(() => {
+    window.removeEventListener('resize', resizeHandler)
+    if (chart) {
+      chart.remove()
+      chart = null
+    }
+    avgSeries = null
+    medianSeries = null
+  })
 })
+
+watch(() => props.points, (val) => {
+  renderChart(val)
+}, { deep: true })
 </script>
 
 <template>
   <div class="app-surface-subtle p-4">
     <div class="mb-3 flex flex-col gap-3 text-xs uppercase tracking-[0.22em] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-      <span>Daily Price Curve</span>
+      <span>每日价格曲线</span>
       <div class="flex items-center gap-3">
         <span class="inline-flex items-center gap-1">
-          <span class="h-2.5 w-2.5 rounded-full bg-sky-600" />
-          {{ t('results.chart.avgPrice') }}
+          <span class="h-2.5 w-2.5 rounded-full bg-orange-600" />
+          均价
         </span>
         <span class="inline-flex items-center gap-1">
           <span class="h-2.5 w-2.5 rounded-full bg-amber-500" />
-          {{ t('results.chart.medianPrice') }}
+          中位价
         </span>
       </div>
     </div>
 
-    <div v-if="validPoints.length === 0" class="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-10 text-center text-sm text-slate-500">
-      {{ t('results.chart.noTrend') }}
+    <div v-if="!hasData" class="rounded-2xl border border-dashed border-slate-200 bg-white/70 px-4 py-10 text-center text-sm text-slate-500">
+      暂无趋势数据
     </div>
 
-    <div v-else>
-      <svg :viewBox="`0 0 ${chartWidth} ${chartHeight}`" class="h-[220px] w-full" role="img" :aria-label="t('results.chart.noTrend')">
-        <defs>
-          <linearGradient id="avg-area-fill" x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stop-color="#0284c7" stop-opacity="0.24" />
-            <stop offset="100%" stop-color="#0284c7" stop-opacity="0" />
-          </linearGradient>
-        </defs>
-
-        <g>
-          <line
-            v-for="index in 4"
-            :key="index"
-            :x1="padding"
-            :x2="chartWidth - padding"
-            :y1="padding + ((chartHeight - padding * 2) / 4) * (index - 1)"
-            :y2="padding + ((chartHeight - padding * 2) / 4) * (index - 1)"
-            stroke="#cbd5e1"
-            stroke-dasharray="4 6"
-          />
-        </g>
-
-        <path :d="areaPath" fill="url(#avg-area-fill)" />
-        <path :d="avgPath" fill="none" stroke="#0284c7" stroke-width="4" stroke-linecap="round" />
-        <path :d="medianPath" fill="none" stroke="#f59e0b" stroke-width="3" stroke-dasharray="8 6" stroke-linecap="round" />
-
-        <g v-for="(point, index) in validPoints" :key="point.day">
-          <circle :cx="resolveX(index)" :cy="resolveY(point.avg_price as number)" r="5" fill="#0284c7" />
-          <circle :cx="resolveX(index)" :cy="resolveY(point.median_price as number)" r="4" fill="#f59e0b" />
-          <text
-            :x="resolveX(index)"
-            :y="chartHeight - 6"
-            text-anchor="middle"
-            fill="#64748b"
-            font-size="12"
-          >
-            {{ point.day.slice(5) }}
-          </text>
-        </g>
-      </svg>
-    </div>
+    <div v-show="hasData" ref="chartContainer" class="w-full" style="min-height: 220px" />
   </div>
 </template>

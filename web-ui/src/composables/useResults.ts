@@ -277,11 +277,12 @@ export function useResults() {
     files.value.map((file) => {
       const keyword = getKeywordFromFilename(file)
       const taskName = taskNameByKeyword.value[keyword]
+      const displayName = taskName || keyword || file.replace(/_full_data\.jsonl$/, '')
       return {
         value: file,
-        taskName: taskName || t('common.unnamed'),
+        taskName: displayName,
         label: t('results.filters.taskNameLabel', {
-          task: taskName || t('common.unnamed'),
+          task: displayName,
         }),
       }
     })

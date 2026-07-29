@@ -49,12 +49,19 @@ export interface DashboardSnapshot {
   focus_file: string | null
 }
 
-export interface DashboardSuggestion {
-  title: string
-  description: string
+export interface SuggestionItem {
+  icon: string
+  label: string
+  detail: string
   actionLabel: string
   routeName: 'Tasks' | 'Settings'
   query: Record<string, string>
+  severity: 'info' | 'warning' | 'success'
+}
+
+export interface DashboardSuggestion {
+  title: string
+  items: SuggestionItem[]
 }
 
 export interface DashboardState {

@@ -11,10 +11,14 @@ import { formatNumber, formatRelativeTimeFromNow } from '@/i18n'
 import {
   Activity,
   ArrowRight,
+  Clock,
   Compass,
+  Filter,
+  Globe,
   LayoutDashboard,
+  MapPin,
+  RefreshCw,
   Search,
-  Sparkles,
   Target,
   Zap,
 } from 'lucide-vue-next'
@@ -29,6 +33,9 @@ const {
   activities,
   isLoading,
   error,
+  taskSummaries,
+  selectTask,
+  selectedTaskId,
 } = useDashboard()
 
 const statCards = computed(() => [
@@ -184,9 +191,21 @@ function openActivity(activity: { filename: string | null; type: string }) {
             </CardTitle>
             <p class="text-sm text-slate-500">{{ focusMeta }}</p>
           </div>
-          <Badge variant="secondary" class="w-fit bg-blue-100 text-blue-600">
-            {{ focusTask?.latest_crawl_time ? t('dashboard.focus.latestUpdate', { time: formatRelativeTimeFromNow(focusTask.latest_crawl_time) }) : t('dashboard.focus.waiting') }}
-          </Badge>
+          <div class="flex items-center gap-2">
+            <select
+              class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm outline-none focus:border-primary"
+              :value="selectedTaskId ?? undefined"
+              @change="selectTask(Number(($event.target as HTMLSelectElement).value))"
+            >
+              <option value="">Auto</option>
+              <option v-for="t in taskSummaries" :key="t.task_id" :value="t.task_id">
+                {{ t.task_name }}
+              </option>
+            </select>
+            <Badge variant="secondary" class="w-fit bg-blue-100 text-blue-600">
+              {{ focusTask?.latest_crawl_time ? t('dashboard.focus.latestUpdate', { time: formatRelativeTimeFromNow(focusTask.latest_crawl_time) }) : t('dashboard.focus.waiting') }}
+            </Badge>
+          </div>
         </CardHeader>
         <CardContent class="space-y-6 p-6">
           <div v-if="isLoading" class="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-10 text-center text-sm text-slate-500">
@@ -279,14 +298,22 @@ function openActivity(activity: { filename: string | null; type: string }) {
         <div class="app-surface border-none p-6">
           <div class="mb-4 flex items-center gap-2">
             <Zap class="w-6 h-6 text-primary" />
-            <h4 class="font-bold text-lg">{{ t('dashboard.suggestion.sectionTitle') }}</h4>
+            <h4 class="font-bold text-lg">{{ suggestion.title }}</h4>
           </div>
-          <p class="mb-2 text-sm leading-relaxed text-slate-800">{{ suggestion.title }}</p>
-          <p class="mb-6 text-sm leading-relaxed text-slate-500">{{ suggestion.description }}</p>
-          <Button class="w-full" @click="openSuggestion">
-            <Sparkles class="mr-2 h-4 w-4" />
-            {{ suggestion.actionLabel }}
-          </Button>
+          <div class="space-y-3">
+            <div
+              v-for="(item, i) in suggestion.items"
+              :key="i"
+              class="rounded-xl border p-4 transition-colors"
+              :class="item.severity === 'warning' ? 'border-amber-200 bg-amber-50/50' : item.severity === 'success' ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200 bg-white'"
+            >
+              <p class="mb-1 text-sm font-bold text-slate-800">{{ item.label }}</p>
+              <p class="mb-3 text-xs leading-relaxed text-slate-500">{{ item.detail }}</p>
+              <Button size="sm" variant="outline" class="text-xs" @click="router.push({ name: item.routeName, query: item.query })">
+                {{ item.actionLabel }}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

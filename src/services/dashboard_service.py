@@ -23,6 +23,7 @@ MAX_RECENT_ACTIVITIES = 8
 
 def _build_summary_metrics(tasks: list[Task], summary_list: list[dict[str, Any]], last_updated_at: Any) -> dict[str, Any]:
     return {
+        "total_tasks": len(tasks),
         "enabled_tasks": sum(1 for task in tasks if task.enabled),
         "running_tasks": sum(1 for task in tasks if task.is_running),
         "result_files": sum(1 for item in summary_list if item.get("filename")),
@@ -45,7 +46,21 @@ async def build_dashboard_snapshot(tasks: list[Task]) -> dict[str, Any]:
     for filename in await list_result_filenames():
         summary, activities, file_latest_time = await summarize_result_file(filename, task_lookup)
         if summary:
-            task_summaries[summary["task_name"]] = summary
+            existing = task_summaries.get(summary["task_name"])
+            if existing and existing.get("filename"):
+                # 合并多个结果文件到同一个任务（词根扩展等情况）
+                existing["total_items"] = int(existing["total_items"]) + int(summary["total_items"])
+                existing["recommended_items"] = int(existing["recommended_items"]) + int(summary["recommended_items"])
+                existing["ai_recommended_items"] = int(existing["ai_recommended_items"]) + int(summary["ai_recommended_items"])
+                existing["keyword_recommended_items"] = int(existing["keyword_recommended_items"]) + int(summary["keyword_recommended_items"])
+                # 取最新的爬取时间
+                new_time = summary.get("latest_crawl_time")
+                if new_time and (not existing.get("latest_crawl_time") or new_time > existing["latest_crawl_time"]):
+                    existing["latest_crawl_time"] = new_time
+                    existing["latest_recommended_title"] = summary.get("latest_recommended_title")
+                    existing["latest_recommended_price"] = summary.get("latest_recommended_price")
+            else:
+                task_summaries[summary["task_name"]] = summary
         recent_activities.extend(activities)
         if file_latest_time and (latest_updated_at is None or file_latest_time > latest_updated_at):
             latest_updated_at = file_latest_time

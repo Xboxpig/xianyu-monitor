@@ -77,12 +77,12 @@ const latestSnapshotText = computed(() => {
       </div>
 
       <div class="space-y-4">
-        <div class="rounded-[28px] border border-primary/10 bg-gradient-to-br from-primary to-sky-700 p-6 text-primary-foreground shadow-[0_16px_40px_rgba(37,99,235,0.22)]">
-          <p class="text-xs uppercase tracking-[0.24em] text-primary-foreground/70">Trend Reading</p>
-          <p class="mt-4 text-3xl font-semibold">
+        <div class="rounded-[28px] border border-emerald-200 bg-emerald-50 p-6">
+          <p class="text-xs uppercase tracking-[0.24em] text-emerald-700">Trend Reading</p>
+          <p class="mt-4 text-3xl font-semibold text-emerald-900">
             {{ t('results.insights.snapshotCount', { count: insights?.market_summary.sample_count || 0 }) }}
           </p>
-          <p class="mt-2 text-sm leading-6 text-primary-foreground/80">
+          <p class="mt-2 text-sm leading-6 text-emerald-800">
             {{ t('results.insights.trendReading') }}
           </p>
         </div>

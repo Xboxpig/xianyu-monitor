@@ -7,43 +7,91 @@ import type {
   DashboardSnapshot,
   DashboardSuggestion,
   DashboardTaskSummary,
+  SuggestionItem,
 } from '@/types/dashboard.d.ts'
 import type { ResultInsights } from '@/types/result.d.ts'
 
 function buildSuggestion(
   focusTask: DashboardTaskSummary | undefined,
-  t: (key: string, params?: Record<string, unknown>) => string,
+  insights: ResultInsights | null,
+  _t: (key: string, params?: Record<string, unknown>) => string,
 ): DashboardSuggestion {
   if (!focusTask || focusTask.task_id === null) {
     return {
-      title: t('dashboard.suggestion.firstTaskTitle'),
-      description: t('dashboard.suggestion.firstTaskDescription'),
-      actionLabel: t('dashboard.suggestion.firstTaskAction'),
-      routeName: 'Tasks',
-      query: { create: '1' },
+      title: 'AI 智能分析',
+      items: [{
+        icon: 'Zap',
+        label: '创建第一个监控任务',
+        detail: '还没有监控任务，创建后即可开始跟踪商品价格变化',
+        actionLabel: '新建任务',
+        routeName: 'Tasks',
+        query: { create: '1' },
+        severity: 'info',
+      }],
     }
   }
 
-  const query: Record<string, string> = {
+  const items: SuggestionItem[] = []
+  const baseQuery: Record<string, string> = {
     edit: String(focusTask.task_id),
     taskName: focusTask.task_name,
     keyword: focusTask.keyword,
-    maxPages: String(Math.max(3, focusTask.total_items > 80 ? 5 : 4)),
-    newPublishOption: focusTask.recommended_items > 0 ? '1天内' : '最新',
-    freeShipping: 'true',
-    personalOnly: 'true',
+  }
+  const m = insights?.market_summary
+
+  if (m && m.sample_count > 0 && m.avg_price) {
+    const mid = Math.round(m.avg_price)
+    items.push({
+      icon: 'Filter',
+      label: '建议设置价格范围',
+      detail: '市场均价 ¥' + mid + '，建议设价格上限 ¥' + (mid * 15 / 10) + ' 过滤高价商品，下限 ¥' + Math.round(mid * 0.5) + ' 过滤异常低价',
+      actionLabel: '一键设置',
+      routeName: 'Tasks',
+      query: { ...baseQuery, minPrice: String(Math.round(mid * 0.5)), maxPrice: String(mid * 15 / 10) },
+      severity: 'info',
+    })
+  }
+
+  const newItemRatio = focusTask.total_items > 0
+    ? (focusTask.total_items - focusTask.recommended_items) / focusTask.total_items
+    : 0
+  if (newItemRatio > 0.5 && focusTask.total_items > 10) {
+    items.push({
+      icon: 'RefreshCw',
+      label: '新商品占比高 (' + Math.round(newItemRatio * 100) + '%)',
+      detail: '扫描到 ' + focusTask.total_items + ' 条商品，其中大量为新收录，建议增加 AI 筛选精准度',
+      actionLabel: '优化 AI Prompt',
+      routeName: 'Tasks',
+      query: { ...baseQuery },
+      severity: 'warning',
+    })
+  }
+
+  if (focusTask.region) {
+    items.push({
+      icon: 'MapPin',
+      label: '地区筛选: ' + focusTask.region.replace(/\//g, ' > '),
+      detail: '当前仅搜索指定地区商品，如需扩大范围可移除地区限制',
+      actionLabel: '修改地区',
+      routeName: 'Tasks',
+      query: { ...baseQuery },
+      severity: 'info',
+    })
+  } else {
+    items.push({
+      icon: 'Globe',
+      label: '未设置地区筛选',
+      detail: '当前搜索全国范围商品，建议按需设置地区缩小范围提高精准度',
+      actionLabel: '设置地区',
+      routeName: 'Tasks',
+      query: { ...baseQuery, region: '广东/广州/全广州' },
+      severity: 'warning',
+    })
   }
 
   return {
-    title: focusTask.recommended_items > 0
-      ? t('dashboard.suggestion.improveValueTitle')
-      : t('dashboard.suggestion.improveHitRateTitle'),
-    description: focusTask.recommended_items > 0
-      ? t('dashboard.suggestion.improveValueDescription', { task: focusTask.task_name })
-      : t('dashboard.suggestion.improveHitRateDescription', { task: focusTask.task_name }),
-    actionLabel: t('dashboard.suggestion.openTaskAction'),
-    routeName: 'Tasks',
-    query,
+    title: 'AI 智能策略',
+    items,
   }
 }
 
@@ -54,6 +102,7 @@ export function useDashboard() {
   const focusInsights = ref<ResultInsights | null>(null)
   const isLoading = ref(false)
   const error = ref<Error | null>(null)
+  const selectedTaskId = ref<number | null>(null)
 
   async function fetchSummary() {
     isLoading.value = true
@@ -73,7 +122,7 @@ export function useDashboard() {
   const stats = computed(() => {
     const summary = snapshot.value?.summary
     return {
-      totalTasks: taskSummaries.value.length,
+      totalTasks: summary?.total_tasks ?? 0,
       enabledTasks: summary?.enabled_tasks || 0,
       runningTasks: summary?.running_tasks || 0,
       scannedItems: summary?.scanned_items || 0,
@@ -84,11 +133,19 @@ export function useDashboard() {
     }
   })
 
-  const focusTask = computed(() =>
-    taskSummaries.value.find((item) => item.filename === snapshot.value?.focus_file) ||
+  function selectTask(taskId: number) {
+    selectedTaskId.value = taskId
+  }
+
+  const focusTask = computed(() => {
+    if (selectedTaskId.value !== null) {
+      const selected = taskSummaries.value.find((item) => item.task_id === selectedTaskId.value)
+      if (selected) return selected
+    }
+    return taskSummaries.value.find((item) => item.filename === snapshot.value?.focus_file) ||
     taskSummaries.value.find((item) => item.filename) ||
     taskSummaries.value[0]
-  )
+  })
 
   async function fetchFocusInsights(filename: string | null | undefined) {
     if (!filename) {
@@ -110,7 +167,7 @@ export function useDashboard() {
     { immediate: true }
   )
 
-  const suggestion = computed(() => buildSuggestion(focusTask.value, t))
+  const suggestion = computed(() => buildSuggestion(focusTask.value, focusInsights.value, t))
 
   on('tasks_updated', fetchSummary)
   on('results_updated', fetchSummary)
@@ -129,5 +186,7 @@ export function useDashboard() {
     isLoading,
     error,
     fetchSummary,
+    selectTask,
+    selectedTaskId,
   }
 }

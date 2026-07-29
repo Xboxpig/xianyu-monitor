@@ -39,7 +39,7 @@ const imageUrl = info.商品图片列表?.[0] || info.商品主图链接 || ''
 const crawlTime = props.item.爬取时间
   ? formatDateTime(props.item.爬取时间, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   : t('common.unknown')
-const matchScore = ai?.value_score ?? 0
+
 const isHidden = computed(() => props.item._effective_hidden === true || props.item._status === 'hidden')
 const isRuleHidden = computed(() => props.item._hidden_reason === 'rule')
 const canToggleBlock = computed(() => props.item._hidden_reason !== 'rule' && props.item._hidden_reason !== 'expired')
@@ -117,23 +117,9 @@ const expanded = ref(false)
     <CardContent class="p-4 pt-2 flex-grow">
       <!-- AI Insight Section -->
       <div class="rounded-xl p-3 border border-slate-100" :class="recommendationStatus.bg">
-        <div class="flex items-center justify-between mb-2">
-          <div class="flex items-center gap-2">
-            <component :is="recommendationStatus.icon" class="w-4 h-4" :class="recommendationStatus.text" />
-            <span class="text-sm font-bold" :class="recommendationStatus.text">{{ recommendationStatus.label }}</span>
-          </div>
-          <div class="flex items-center gap-1">
-             <span class="text-[10px] font-medium uppercase tracking-wider text-slate-400">AI Match</span>
-             <span class="text-sm font-black" :class="recommendationStatus.text">{{ matchScore }}%</span>
-          </div>
-        </div>
-        
-        <div class="w-full h-1.5 bg-white/50 rounded-full overflow-hidden mb-3">
-          <div 
-            class="h-full transition-all duration-1000 ease-out rounded-full" 
-            :class="recommendationStatus.color"
-            :style="{ width: `${matchScore}%` }"
-          ></div>
+        <div class="flex items-center gap-2 mb-2">
+          <component :is="recommendationStatus.icon" class="w-4 h-4" :class="recommendationStatus.text" />
+          <span class="text-sm font-bold" :class="recommendationStatus.text">{{ recommendationStatus.label }}</span>
         </div>
 
         <p class="text-xs leading-relaxed text-slate-600" :class="{ 'line-clamp-2': !expanded }">
