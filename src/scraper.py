@@ -804,31 +804,36 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         print(f"LOG: 应用包邮筛选失败: {e}")
 
                 if region_filter:
+                    log_time(f"[区域] 开始应用区域筛选: '{region_filter}'")
                     try:
                         # 尝试多次点击区域按钮（弹窗可能被遮挡）
                         for attempt in range(3):
                             area_trigger = page.get_by_text("区域", exact=True)
+                            log_time(f"[区域] 第 {attempt+1} 次尝试查找'区域'按钮，count={await area_trigger.count()}")
                             if await area_trigger.count():
                                 await area_trigger.first.click()
-                                await random_sleep(2, 3)
+                                await random_sleep(3, 4)
                                 # 检查弹窗是否出现
                                 popover = page.locator("div.ant-popover").filter(
                                     has=page.locator("[class*='areaWrap'], [class*='AreaWrap']")
                                 ).last
                                 if await popover.count():
+                                    log_time(f"[区域] 通过 areaWrap 找到弹窗")
                                     break
                                 popover = page.locator("div.ant-popover").filter(
                                     has=page.get_by_text("重新定位")
                                 ).last
                                 if await popover.count():
+                                    log_time(f"[区域] 通过'重新定位'找到弹窗")
                                     break
                                 popover = page.locator("div.ant-popover").filter(
                                     has=page.get_by_text("查看")
                                 ).last
                                 if await popover.count():
+                                    log_time(f"[区域] 通过'查看'找到弹窗")
                                     break
                             if attempt < 2:
-                                log_time(f"区域弹窗未出现，第 {attempt+2} 次尝试...")
+                                log_time(f"[区域] 弹窗未出现，{attempt+2}/3 次重试...")
                                 await random_sleep(3, 5)
 
                         if not await popover.count():
@@ -841,10 +846,15 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                             "[class*='areaWrap'], [class*='AreaWrap'], [class*='area_list'], [class*='filterPanel']"
                         ).first
                         if not await area_wrap.count():
-                            # 回退：直接取弹窗内容区
+                            log_time("[区域] areaWrap 类名未匹配，尝试弹窗内容区回退")
                             area_wrap = popover.locator(":scope > div > div").first
+                        if not await area_wrap.count():
+                            log_time("[区域] 内容区回退也失败，尝试整个弹窗")
+                            area_wrap = popover.locator(":scope").first
                         await area_wrap.wait_for(state="visible", timeout=5000)
                         columns = area_wrap.locator(":scope > div")
+                        col_count = await columns.count()
+                        log_time(f"[区域] 找到 {col_count} 列")
                         col_prov = columns.nth(0)
                         col_city = columns.nth(1)
                         col_dist = columns.nth(2)
@@ -874,16 +884,19 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                 print(f"LOG: 未找到{desc}选项，跳过。")
 
                         if len(region_parts) >= 1:
+                            log_time(f"[区域] 点击省: {region_parts[0]}")
                             await _click_in_column(
                                 col_prov, region_parts[0], "省份"
                             )
                             await random_sleep(1, 2)
                         if len(region_parts) >= 2:
+                            log_time(f"[区域] 点击市: {region_parts[1]}")
                             await _click_in_column(
                                 col_city, region_parts[1], "城市"
                             )
                             await random_sleep(1, 2)
                         if len(region_parts) >= 3:
+                            log_time(f"[区域] 点击区: {region_parts[2]}")
                             await _click_in_column(
                                 col_dist, region_parts[2], "区/县"
                             )
@@ -892,6 +905,8 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         search_btn = popover.get_by_role("button").filter(
                             has_text=re.compile(r"查看\d+件宝贝")
                         ).first
+                        btn_count = await popover.get_by_role("button").count()
+                        log_time(f"[区域] 弹窗中有 {btn_count} 个按钮")
                         if await search_btn.count():
                             try:
                                 async with page.expect_response(
@@ -1099,6 +1114,17 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                 # ...[此处可添加更多从详情页解析出的商品信息]...
 
                                 user_id = await safe_get(seller_do, "sellerId")
+
+                                # --- 区域硬性过滤：检查发货地是否在目标城市 ---
+                                if region_filter:
+                                    region_city = region_filter.split("/")[1] if len(region_filter.split("/")) >= 2 else region_filter.split("/")[0]
+                                    item_region = str(item_data.get("发货地区", "") or "")
+                                    if region_city not in item_region:
+                                        log_time(f"[区域] 跳过非{region_city}商品: {item_region} | {item_data.get('商品标题','')[:30]}")
+                                        await detail_page.close()
+                                        await random_sleep(2, 4)
+                                        continue
+                                    log_time(f"[区域] ✅ 商品在{region_city}: {item_region}")
 
                                 # 构建基础记录
                                 final_record = {
