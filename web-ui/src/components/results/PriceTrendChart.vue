@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { createChart, LineSeries, type IChartApi, type ISeriesApi } from 'lightweight-charts'
+import { createChart, LineSeries, ColorType, type IChartApi, type ISeriesApi } from 'lightweight-charts'
 
 interface TrendPoint {
   day: string
@@ -60,7 +60,7 @@ onMounted(() => {
 
   chart = createChart(chartContainer.value, {
     layout: {
-      background: { type: 'solid', color: 'transparent' },
+      background: { type: ColorType.Solid, color: 'transparent' },
       textColor: '#64748b',
     },
     grid: {

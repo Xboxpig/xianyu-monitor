@@ -22,17 +22,24 @@ const inactiveSearchValue = ref('')
 const { t } = useI18n()
 
 const isDashboard = computed(() => route.name === 'Dashboard')
+const greetingKey = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 6) return 'header.greetingEvening'
+  if (hour < 12) return 'header.greetingMorning'
+  if (hour < 18) return 'header.greetingAfternoon'
+  return 'header.greetingEvening'
+})
 
 function goAccounts() {
-  router.push('/accounts')
+  router.push('/admin?tab=accounts')
 }
 
 function goNotifications() {
-  router.push({ name: 'Settings', query: { tab: 'notifications' } })
+  router.push('/admin?tab=notifications')
 }
 
 function goPrompts() {
-  router.push({ name: 'Settings', query: { tab: 'prompts' } })
+  router.push('/admin?tab=prompts')
 }
 </script>
 
@@ -47,10 +54,18 @@ function goPrompts() {
       <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/20 transition-transform group-hover:rotate-12">
         <Zap class="w-5 h-5 text-white fill-white" />
       </div>
-      <h1 class="text-lg font-black text-slate-800 tracking-tighter">
-        xiaolin-xianyu-max
-      </h1>
+      <div>
+        <h1 class="text-base font-black text-slate-800 tracking-tight leading-none">
+          {{ t('header.brandTitle') }}
+        </h1>
+        <p class="text-[10px] text-muted-foreground font-medium mt-0.5 hidden sm:block">
+          {{ t('header.brandSub') }}
+        </p>
+      </div>
     </RouterLink>
+    <p v-if="isDashboard" class="hidden lg:block text-sm font-bold text-slate-700 ml-2">
+      {{ t(greetingKey) }}
+    </p>
     <div class="hidden md:flex flex-grow max-w-md mx-8">
       <DashboardTaskSearch v-if="isDashboard" />
       <div v-else class="relative w-full group">

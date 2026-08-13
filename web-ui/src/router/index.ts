@@ -1,5 +1,5 @@
 import { watch } from 'vue'
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationGeneric } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useAuth } from '@/composables/useAuth'
 import { i18n, t } from '@/i18n'
@@ -25,32 +25,42 @@ const routes = [
       {
         path: 'tasks',
         name: 'Tasks',
-        component: () => import('@/views/TasksView.vue'),
-        meta: { titleKey: 'routes.tasks', requiresAuth: true },
-      },
-      {
-        path: 'accounts',
-        name: 'Accounts',
-        component: () => import('@/views/AccountsView.vue'),
-        meta: { titleKey: 'routes.accounts', requiresAuth: true },
+        redirect: (to: RouteLocationGeneric) => ({ path: '/monitor', query: { ...to.query } }),
       },
       {
         path: 'results',
         name: 'Results',
-        component: () => import('@/views/ResultsView.vue'),
-        meta: { titleKey: 'routes.results', requiresAuth: true },
+        redirect: (to: RouteLocationGeneric) => ({ path: '/monitor', query: { ...to.query } }),
+      },
+      {
+        path: 'accounts',
+        name: 'Accounts',
+        redirect: '/admin?tab=accounts',
       },
       {
         path: 'logs',
         name: 'Logs',
-        component: () => import('@/views/LogsView.vue'),
-        meta: { titleKey: 'routes.logs', requiresAuth: true },
+        redirect: '/admin?tab=logs',
       },
       {
         path: 'settings',
         name: 'Settings',
-        component: () => import('@/views/SettingsView.vue'),
-        meta: { titleKey: 'routes.settings', requiresAuth: true },
+        redirect: (to: RouteLocationGeneric) => ({
+          path: '/admin',
+          query: { tab: typeof to.query.tab === 'string' ? to.query.tab : 'system' },
+        }),
+      },
+      {
+        path: 'monitor',
+        name: 'Monitor',
+        component: () => import('@/views/MonitorView.vue'),
+        meta: { titleKey: 'routes.monitor', requiresAuth: true },
+      },
+      {
+        path: 'admin',
+        name: 'Admin',
+        component: () => import('@/views/AdminView.vue'),
+        meta: { titleKey: 'routes.admin', requiresAuth: true },
       },
     ],
   },

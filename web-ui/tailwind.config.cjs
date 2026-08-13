@@ -62,8 +62,8 @@ module.exports = {
         }
       },
       boxShadow: {
-        'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.07)',
-        'card-hover': '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+        'glass': '0 8px 32px 0 rgba(120, 90, 50, 0.08)',
+        'card-hover': '0 16px 30px -6px rgba(80, 60, 40, 0.14), 0 4px 10px -4px rgba(80, 60, 40, 0.08)',
       },
       borderRadius: {
         lg: "var(--radius)",

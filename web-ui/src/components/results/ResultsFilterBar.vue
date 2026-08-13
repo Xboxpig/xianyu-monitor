@@ -92,10 +92,10 @@ function handleToggleKeywordRecommended(value: boolean) {
 </script>
 
 <template>
-  <div class="app-surface mb-6 p-4 sm:p-5">
+  <div class="mb-4 border-b border-border/70 pb-4">
     <div class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
       <div class="space-y-2">
-        <Label class="text-xs font-semibold text-slate-500">{{ t('results.title') }}</Label>
+        <Label class="text-xs font-semibold text-muted-foreground">{{ t('results.title') }}</Label>
         <Select
           :model-value="props.selectedFile || undefined"
           @update:model-value="(value) => emit('update:selectedFile', value as string)"
@@ -114,7 +114,7 @@ function handleToggleKeywordRecommended(value: boolean) {
       </div>
 
       <div class="space-y-2">
-        <Label class="text-xs font-semibold text-slate-500">{{ t('results.filters.sortByCrawlTime') }}</Label>
+        <Label class="text-xs font-semibold text-muted-foreground">{{ t('results.filters.sortByCrawlTime') }}</Label>
         <Select
           :model-value="props.sortBy"
           @update:model-value="(value) => emit('update:sortBy', value as any)"
@@ -132,7 +132,7 @@ function handleToggleKeywordRecommended(value: boolean) {
       </div>
 
       <div class="space-y-2">
-        <Label class="text-xs font-semibold text-slate-500">{{ t('results.filters.asc') }} / {{ t('results.filters.desc') }}</Label>
+        <Label class="text-xs font-semibold text-muted-foreground">{{ t('results.filters.asc') }} / {{ t('results.filters.desc') }}</Label>
         <Select
           :model-value="props.sortOrder"
           @update:model-value="(value) => emit('update:sortOrder', value as any)"

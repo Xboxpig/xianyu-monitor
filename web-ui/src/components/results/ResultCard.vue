@@ -53,7 +53,7 @@ const expanded = ref(false)
 </script>
 
 <template>
-  <Card class="group flex flex-col h-full border-none shadow-glass hover:shadow-card-hover transition-all duration-300 rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm" :class="{ 'opacity-50': isHidden }">
+  <Card class="group flex flex-col h-full border-none shadow-[0_1px_2px_rgba(90,70,40,0.04),0_6px_18px_rgba(90,70,40,0.07)] hover:shadow-card-hover transition-all duration-300 rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm" :class="{ 'opacity-50': isHidden }">
     <!-- Image Header -->
     <div class="relative aspect-[4/3] overflow-hidden">
       <div class="absolute inset-0 bg-slate-200 animate-pulse" v-if="!imageUrl"></div>

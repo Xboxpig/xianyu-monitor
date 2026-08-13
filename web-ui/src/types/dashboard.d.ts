@@ -1,6 +1,7 @@
 import type { ResultInsights } from '@/types/result.d.ts'
 
 export interface DashboardSummary {
+  total_tasks: number
   enabled_tasks: number
   running_tasks: number
   result_files: number

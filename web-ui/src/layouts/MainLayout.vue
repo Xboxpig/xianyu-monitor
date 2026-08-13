@@ -48,7 +48,7 @@ const { t } = useI18n()
       </aside>
 
       <!-- Main Content Area -->
-      <main id="main-content" tabindex="-1" class="flex-grow overflow-x-hidden p-4 focus:outline-none md:p-8">
+      <main id="main-content" tabindex="-1" class="flex-grow overflow-x-clip p-4 focus:outline-none md:p-8">
         <div class="max-w-7xl mx-auto animate-fade-in">
           <RouterView v-slot="{ Component }">
             <transition name="page" mode="out-in">
