@@ -16,13 +16,6 @@ A Playwright and AI-powered multi-task real-time monitoring tool for Xianyu (闲
 - **Account & Proxy Rotation**: Multi-account management, task-account binding, proxy pool rotation with failure retry
 - **Docker Deployment**: One-click containerized deployment
 
-## Screenshots
-
-![Monitoring Overview](static/img.png)
-![Task Management](static/img_1.png)
-![Result Viewer](static/img_2.png)
-![Notification Settings](static/img_3.png)
-
 ## Quick Start
 
 ### Requirements
@@ -297,6 +290,3 @@ Also thanks to ClaudeCode/Gemini/Codex and other model tools for freeing our han
 - For more details, please refer to the [Disclaimer](DISCLAIMER.md) file.
 
 </details>
-
-## Star History
-

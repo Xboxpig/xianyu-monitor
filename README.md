@@ -16,13 +16,6 @@
 - **账号与代理轮换**: 多账号管理、任务绑定账号、代理池轮换与失败重试
 - **Docker 部署**: 一键容器化部署
 
-## 截图
-
-![监控概览](static/img.png)
-![任务管理](static/img_1.png)
-![结果查看](static/img_2.png)
-![通知推送](static/img_3.png)
-
 ## 🐳 Docker 部署（推荐）
 
 ```bash
@@ -312,8 +305,3 @@ AI 模式会先生成分析标准，再创建任务。现在该流程已改为�
 - 如需了解更多详细信息，请查看 [免责声明](DISCLAIMER.md) 文件。
 
 </details>
-
-## Star History
-
-
-![Alt](https://repobeats.axiom.co/api/embed/b40d8a112271b4bddabadd8fe2635be3c1aa28a3.svg "Repobeats analytics image")
