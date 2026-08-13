@@ -29,7 +29,11 @@ def _normalize_keyword_values(value) -> List[str]:
 
     raw_values = []
     if isinstance(value, (list, tuple, set)):
-        raw_values = list(value)
+        for item in value:
+            if isinstance(item, str):
+                raw_values.extend(re.split(r"[\n,]+", item))
+            else:
+                raw_values.append(item)
     elif isinstance(value, str):
         raw_values = re.split(r"[\n,]+", value)
     else:
@@ -104,6 +108,12 @@ def _normalize_price_value(value):
     return value
 
 
+def _normalize_rule_mode(value) -> str:
+    if value is None:
+        return "any"
+    return "all" if str(value).strip().lower() == "all" else "any"
+
+
 class Task(BaseModel):
     """任务实体"""
 
@@ -129,6 +139,8 @@ class Task(BaseModel):
     region: Optional[str] = None
     decision_mode: Literal["ai", "keyword"] = "ai"
     keyword_rules: List[str] = Field(default_factory=list)
+    keyword_rule_mode: Literal["any", "all"] = "any"
+    exclude_keywords: List[str] = Field(default_factory=list)
     is_running: bool = False
 
     @model_validator(mode="before")
@@ -140,6 +152,16 @@ class Task(BaseModel):
     @classmethod
     def normalize_keyword_rules(cls, value):
         return _normalize_keyword_values(value)
+
+    @field_validator("exclude_keywords", mode="before")
+    @classmethod
+    def normalize_exclude_keywords(cls, value):
+        return _normalize_keyword_values(value)
+
+    @field_validator("keyword_rule_mode", mode="before")
+    @classmethod
+    def normalize_keyword_rule_mode(cls, value):
+        return _normalize_rule_mode(value)
 
     def can_start(self) -> bool:
         """检查任务是否可以启动"""
@@ -179,6 +201,8 @@ class TaskCreate(BaseModel):
     region: Optional[str] = None
     decision_mode: Literal["ai", "keyword"] = "ai"
     keyword_rules: List[str] = Field(default_factory=list)
+    keyword_rule_mode: Literal["any", "all"] = "any"
+    exclude_keywords: List[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -209,6 +233,16 @@ class TaskCreate(BaseModel):
     @classmethod
     def normalize_keyword_rules(cls, value):
         return _normalize_keyword_values(value)
+
+    @field_validator("exclude_keywords", mode="before")
+    @classmethod
+    def normalize_exclude_keywords(cls, value):
+        return _normalize_keyword_values(value)
+
+    @field_validator("keyword_rule_mode", mode="before")
+    @classmethod
+    def normalize_keyword_rule_mode(cls, value):
+        return _normalize_rule_mode(value)
 
     @model_validator(mode="after")
     def validate_decision_mode_payload(self):
@@ -246,6 +280,8 @@ class TaskUpdate(BaseModel):
     region: Optional[str] = None
     decision_mode: Optional[Literal["ai", "keyword"]] = None
     keyword_rules: Optional[List[str]] = None
+    keyword_rule_mode: Optional[Literal["any", "all"]] = None
+    exclude_keywords: Optional[List[str]] = None
     is_running: Optional[bool] = None
 
     @model_validator(mode="before")
@@ -277,6 +313,16 @@ class TaskUpdate(BaseModel):
     @classmethod
     def normalize_keyword_rules(cls, value):
         return _normalize_keyword_values(value)
+
+    @field_validator("exclude_keywords", mode="before")
+    @classmethod
+    def normalize_exclude_keywords(cls, value):
+        return _normalize_keyword_values(value)
+
+    @field_validator("keyword_rule_mode", mode="before")
+    @classmethod
+    def normalize_keyword_rule_mode(cls, value):
+        return _normalize_rule_mode(value)
 
     @model_validator(mode="after")
     def validate_partial_keyword_payload(self):
@@ -310,6 +356,8 @@ class TaskGenerateRequest(BaseModel):
     region: Optional[str] = None
     decision_mode: Literal["ai", "keyword"] = "ai"
     keyword_rules: List[str] = Field(default_factory=list)
+    keyword_rule_mode: Literal["any", "all"] = "any"
+    exclude_keywords: List[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -345,6 +393,16 @@ class TaskGenerateRequest(BaseModel):
     @classmethod
     def normalize_keyword_rules(cls, value):
         return _normalize_keyword_values(value)
+
+    @field_validator("exclude_keywords", mode="before")
+    @classmethod
+    def normalize_exclude_keywords(cls, value):
+        return _normalize_keyword_values(value)
+
+    @field_validator("keyword_rule_mode", mode="before")
+    @classmethod
+    def normalize_keyword_rule_mode(cls, value):
+        return _normalize_rule_mode(value)
 
     @model_validator(mode="after")
     def validate_decision_mode_payload(self):

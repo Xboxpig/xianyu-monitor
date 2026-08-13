@@ -15,6 +15,7 @@ type FormMode = 'create' | 'edit'
 type EmittedData = TaskGenerateRequest | Partial<Task>
 const AUTO_ACCOUNT_VALUE = '__auto__'
 const EMPTY_CRON_VALUE = '__manual__'
+const DEFAULT_REGION = '广东/广州/全广州'
 
 const props = defineProps<{
   mode: FormMode
@@ -138,7 +139,7 @@ watch(() => [props.mode, props.initialData, props.defaultValues, props.defaultAc
       account_state_file: props.defaultAccount || AUTO_ACCOUNT_VALUE,
       free_shipping: true,
       new_publish_option: '__none__',
-      region: '',
+      region: DEFAULT_REGION,
       decision_mode: 'ai',
       ...defaultValues,
     }

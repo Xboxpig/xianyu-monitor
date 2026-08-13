@@ -51,4 +51,10 @@ def test_save_to_jsonl(tmp_path, monkeypatch):
             sort_order="asc",
         )
     )
-    assert records == [record]
+    # load_all_result_records 会附加可见性装饰字段（黑名单/状态），
+    # 因此按字段逐一比对业务数据，而非整个 record 相等。
+    assert len(records) == 1
+    saved = records[0]
+    for key, value in record.items():
+        assert saved.get(key) == value
+    assert saved["_status"] == "active"

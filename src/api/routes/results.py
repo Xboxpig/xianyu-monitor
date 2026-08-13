@@ -14,6 +14,7 @@ from src.services.result_file_service import (
     enrich_records_with_price_insight,
     validate_result_filename,
 )
+from src.api.routes.websocket import broadcast_message
 from src.services.result_storage_service import (
     build_result_ndjson,
     delete_result_file_records,
@@ -76,6 +77,7 @@ async def delete_result_file(filename: str):
     deleted_rows = await delete_result_file_records(filename)
     if deleted_rows <= 0:
         raise HTTPException(status_code=404, detail="文件不存在")
+    await broadcast_message("results_updated", {"action": "deleted", "filename": filename})
     return {"message": f"文件 {filename} 已成功删除"}
 
 

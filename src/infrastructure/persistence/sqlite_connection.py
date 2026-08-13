@@ -43,6 +43,8 @@ SCHEMA_STATEMENTS = (
         region TEXT,
         decision_mode TEXT NOT NULL,
         keyword_rules_json TEXT NOT NULL,
+        keyword_rule_mode TEXT NOT NULL DEFAULT 'any',
+        exclude_keywords_json TEXT NOT NULL DEFAULT '[]',
         is_running INTEGER NOT NULL
     )
     """,
@@ -143,7 +145,29 @@ def init_schema(conn: sqlite3.Connection) -> None:
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
     _migrate_result_items_status(conn)
+    _migrate_tasks_keyword_fields(conn)
     conn.commit()
+
+
+def _migrate_tasks_keyword_fields(conn: sqlite3.Connection) -> None:
+    """为 tasks 表添加 keyword_rule_mode / exclude_keywords_json 列（仅执行一次）。"""
+    row = conn.execute(
+        "SELECT value FROM app_metadata WHERE key = 'migration:tasks_keyword_fields'"
+    ).fetchone()
+    if row is not None:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(tasks)").fetchall()]
+    if "keyword_rule_mode" not in cols:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN keyword_rule_mode TEXT NOT NULL DEFAULT 'any'"
+        )
+    if "exclude_keywords_json" not in cols:
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN exclude_keywords_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO app_metadata(key, value) VALUES ('migration:tasks_keyword_fields', 'done')"
+    )
 
 
 def _migrate_result_items_status(conn: sqlite3.Connection) -> None:

@@ -52,7 +52,12 @@ async def main():
         if isinstance(value, str):
             raw_values = re.split(r"[\n,]+", value)
         elif isinstance(value, (list, tuple, set)):
-            raw_values = list(value)
+            raw_values = []
+            for item in value:
+                if isinstance(item, str):
+                    raw_values.extend(re.split(r"[\n,]+", item))
+                else:
+                    raw_values.append(item)
         else:
             raw_values = [value]
 
@@ -107,6 +112,9 @@ async def main():
             task["keyword_rules"] = flatten_legacy_groups(task.get("keyword_rule_groups") or [])
         else:
             task["keyword_rules"] = normalize_keywords(keyword_rules)
+        task["exclude_keywords"] = normalize_keywords(task.get("exclude_keywords"))
+        rule_mode = str(task.get("keyword_rule_mode", "any")).strip().lower()
+        task["keyword_rule_mode"] = "all" if rule_mode == "all" else "any"
 
         if decision_mode == "keyword":
             task["ai_prompt_text"] = ""
