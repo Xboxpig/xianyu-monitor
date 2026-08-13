@@ -29,6 +29,8 @@ from src.config import (
     SKIP_AI_ANALYSIS,
     STATE_FILE,
 )
+from src.hard_filter import apply_hard_filters
+from src.region_resolver import parse_region_target, region_targets_match
 from src.parsers import (
     _parse_search_results_json,
     _parse_user_items_data,
@@ -803,6 +805,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     except Exception as e:
                         print(f"LOG: 应用包邮筛选失败: {e}")
 
+                region_ui_applied = False
                 if region_filter:
                     log_time(f"[区域] 开始应用区域筛选: '{region_filter}'")
                     try:
@@ -902,11 +905,17 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                             )
                             await random_sleep(1, 2)
 
+                        # 新版闲鱼弹窗可能用 div/span 渲染提交按钮而非 <button>，
+                        # 因此先按 button role 查找，找不到则退化为文本定位。
+                        # text= 引擎匹配「最小的含该文本的元素」，即按钮本身而非外层容器。
                         search_btn = popover.get_by_role("button").filter(
                             has_text=re.compile(r"查看\d+件宝贝")
                         ).first
-                        btn_count = await popover.get_by_role("button").count()
-                        log_time(f"[区域] 弹窗中有 {btn_count} 个按钮")
+                        if not await search_btn.count():
+                            search_btn = popover.locator(
+                                r"text=/查看\d+件宝贝/"
+                            ).first
+                            log_time("[区域] 弹窗内未找到原生 button，改用文本定位'查看X件宝贝'")
                         if await search_btn.count():
                             try:
                                 async with page.expect_response(
@@ -916,19 +925,19 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                     await search_btn.click()
                                     await random_sleep(2, 3)
                                 final_response = await response_info.value
+                                region_ui_applied = True
+                                log_time("[区域] ✅ 页面区域筛选提交成功")
                             except PlaywrightTimeoutError:
                                 log_time("区域筛选提交超时，继续执行。")
+                            except Exception as click_err:
+                                print(f"LOG: 区域提交按钮点击失败: {click_err}")
                         else:
                             print(
-                                "LOG: 未找到区域弹窗的“查看XX件宝贝”按钮，跳过提交。"
+                                "⚠️ LOG: 未找到区域弹窗的'查看XX件宝贝'按钮，"
+                                "页面区域筛选未生效，将依赖硬过滤兜底拦截。"
                             )
-                            debug_html = await popover.inner_html()
                             debug_text = await popover.inner_text()
-                            print(f"DEBUG popover HTML: {debug_html[:500]}")
-                            print(f"DEBUG popover text: {debug_text[:500]}")
-                            debug_btns = await popover.get_by_role("button").all()
-                            for i, btn in enumerate(debug_btns):
-                                print(f"DEBUG button[{i}]: '{await btn.inner_text()}' visible={await btn.is_visible()}")
+                            print(f"DEBUG popover text: {debug_text[:600]}")
                     except PlaywrightTimeoutError:
                         log_time(f"区域筛选 '{region_filter}' 请求超时，继续执行。")
                     except Exception as e:
@@ -994,6 +1003,21 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     )
                     if not basic_items:
                         break
+                    basic_items, drop_reasons = apply_hard_filters(
+                        basic_items,
+                        min_price=min_price,
+                        max_price=max_price,
+                        region=region_filter,
+                        region_ui_applied=region_ui_applied,
+                        free_shipping=free_shipping,
+                        keyword_rules=keyword_rules,
+                        keyword_rule_mode=str(
+                            task_config.get("keyword_rule_mode", "any")
+                        ).lower(),
+                        exclude_keywords=task_config.get("exclude_keywords") or [],
+                    )
+                    for drop_reason in drop_reasons:
+                        print(f"[硬过滤] 商品被条件拦截: {drop_reason}")
                     historical_snapshots.extend(
                         record_market_snapshots(
                             keyword=keyword,
@@ -1115,16 +1139,15 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
 
                                 user_id = await safe_get(seller_do, "sellerId")
 
-                                # --- 区域硬性过滤：检查发货地是否在目标城市 ---
+                                # --- 区域后置过滤日志（不下发，辅助监控） ---
                                 if region_filter:
-                                    region_city = region_filter.split("/")[1] if len(region_filter.split("/")) >= 2 else region_filter.split("/")[0]
                                     item_region = str(item_data.get("发货地区", "") or "")
-                                    if region_city not in item_region:
-                                        log_time(f"[区域] 跳过非{region_city}商品: {item_region} | {item_data.get('商品标题','')[:30]}")
-                                        await detail_page.close()
-                                        await random_sleep(2, 4)
-                                        continue
-                                    log_time(f"[区域] ✅ 商品在{region_city}: {item_region}")
+                                    target = parse_region_target(region_filter)
+                                    if not region_targets_match(item_region, target):
+                                        log_time(
+                                            f"[区域] 商品 {item_region!r} 不匹配目标 {target}，"
+                                            "已依赖硬过滤兜底拦截"
+                                        )
 
                                 # 构建基础记录
                                 final_record = {
