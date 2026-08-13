@@ -88,11 +88,26 @@ def test_generate_ai_task_returns_job_and_completes_async(api_client, api_contex
 
     async def fake_generate_criteria(*_args, **_kwargs):
         await asyncio.sleep(0.05)
-        return "[V6.3 核心升级]\\nApple Watch criteria"
+        return (
+            "### **第一部分：核心分析原则 (不可违背)**\n"
+            "1. **画像优先原则 (PERSONA-FIRST PRINCIPLE)**: 评估卖家行为画像是否自洽。\n"
+            "2. **一票否决硬性原则 (HARD DEAL-BREAKER RULES)**: 任何一项不满足立即否决。\n"
+            "### **第二部分：详细分析指南**\n"
+            "【危险信号清单 (Red Flag List)】与豁免条款：维修史缺失、交易异常等。\n"
+            + "补充分析要点。" * 60
+        )
 
     monkeypatch.setattr(
         "src.services.task_generation_runner.generate_criteria",
         fake_generate_criteria,
+    )
+
+    async def fake_extract_search_params(*_args, **_kwargs):
+        return {"min_price": None, "max_price": None, "exclude_keywords": []}
+
+    monkeypatch.setattr(
+        "src.services.task_generation_runner.extract_search_params",
+        fake_extract_search_params,
     )
 
     response = api_client.post("/api/tasks/generate", json=payload)

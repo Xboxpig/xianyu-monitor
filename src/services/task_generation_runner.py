@@ -2,11 +2,12 @@
 任务生成作业执行器
 """
 import os
+from typing import Optional
 
 import aiofiles
 
 from src.domain.models.task import TaskCreate, TaskGenerateRequest
-from src.prompt_utils import generate_criteria
+from src.prompt_utils import extract_search_params, generate_criteria
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_service import TaskService
@@ -19,7 +20,40 @@ def build_criteria_filename(keyword: str) -> str:
     return f"prompts/{safe_keyword}_criteria.txt"
 
 
-def build_task_create(req: TaskGenerateRequest, criteria_file: str) -> TaskCreate:
+def _apply_extracted_params(req: TaskGenerateRequest, extracted: dict) -> dict:
+    """把 AI 从需求中提取的结构化参数回流到任务字段。
+
+    仅在用户未显式填写时生效：价格区间取提取值，排除词按用户值优先合并。
+    """
+    applied: dict = {}
+
+    for field in ("min_price", "max_price"):
+        user_value = getattr(req, field)
+        extracted_value = extracted.get(field)
+        if user_value in (None, "") and extracted_value is not None:
+            applied[field] = (
+                str(int(extracted_value))
+                if isinstance(extracted_value, float) and extracted_value.is_integer()
+                else str(extracted_value)
+            )
+
+    user_excludes = [str(k).strip() for k in (req.exclude_keywords or []) if str(k).strip()]
+    if not user_excludes:
+        extracted_excludes = [
+            str(k).strip() for k in (extracted.get("exclude_keywords") or []) if str(k).strip()
+        ]
+        if extracted_excludes:
+            applied["exclude_keywords"] = extracted_excludes
+
+    return applied
+
+
+def build_task_create(
+    req: TaskGenerateRequest,
+    criteria_file: str,
+    extracted_params: Optional[dict] = None,
+) -> TaskCreate:
+    applied = _apply_extracted_params(req, extracted_params or {})
     return TaskCreate(
         task_name=req.task_name,
         enabled=True,
@@ -28,8 +62,8 @@ def build_task_create(req: TaskGenerateRequest, criteria_file: str) -> TaskCreat
         analyze_images=req.analyze_images,
         max_pages=req.max_pages,
         personal_only=req.personal_only,
-        min_price=req.min_price,
-        max_price=req.max_price,
+        min_price=applied.get("min_price", req.min_price),
+        max_price=applied.get("max_price", req.max_price),
         cron=req.cron,
         ai_prompt_base_file="prompts/base_prompt.txt",
         ai_prompt_criteria_file=criteria_file,
@@ -40,6 +74,8 @@ def build_task_create(req: TaskGenerateRequest, criteria_file: str) -> TaskCreat
         region=req.region,
         decision_mode=req.decision_mode or "ai",
         keyword_rules=req.keyword_rules,
+        keyword_rule_mode=req.keyword_rule_mode,
+        exclude_keywords=applied.get("exclude_keywords", req.exclude_keywords),
     )
 
 
@@ -98,6 +134,20 @@ async def run_ai_generation_job(
         await advance_job(
             generation_service,
             job_id,
+            "extract",
+            "正在从需求中提取结构化搜索参数。",
+        )
+        extracted_params = await extract_search_params(req.description or "")
+        if (
+            extracted_params.get("min_price") is not None
+            or extracted_params.get("max_price") is not None
+            or extracted_params.get("exclude_keywords")
+        ):
+            print(f"已从需求提取搜索参数: {extracted_params}")
+
+        await advance_job(
+            generation_service,
+            job_id,
             "persist",
             f"正在保存分析标准到 {output_filename}。",
         )
@@ -109,7 +159,9 @@ async def run_ai_generation_job(
             "task",
             "分析标准已生成，正在创建任务记录。",
         )
-        task = await task_service.create_task(build_task_create(req, output_filename))
+        task = await task_service.create_task(
+            build_task_create(req, output_filename, extracted_params)
+        )
         await reload_scheduler(task_service, scheduler_service)
         await generation_service.complete(job_id, task, f"任务“{req.task_name}”创建完成。")
     except Exception as exc:

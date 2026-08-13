@@ -15,6 +15,7 @@ DEFAULT_GENERATION_STEPS: tuple[tuple[str, str], ...] = (
     ("reference", "读取参考文件"),
     ("prompt", "构建提示词"),
     ("llm", "调用 AI 生成标准"),
+    ("extract", "提取结构化搜索参数"),
     ("persist", "保存分析标准"),
     ("task", "创建任务记录"),
 )
