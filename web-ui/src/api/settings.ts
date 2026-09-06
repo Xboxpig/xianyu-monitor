@@ -56,6 +56,20 @@ export interface AiSettings {
   OPENAI_API_KEY?: string
   OPENAI_BASE_URL?: string
   OPENAI_MODEL_NAME?: string
+  AI_API_MODE?: 'auto' | 'chat_completions' | 'responses'
+  AI_STREAM_MODE?: 'auto' | 'sse' | 'off'
+  AI_ENDPOINT_AUTO_DETECT?: boolean
+  AI_ENDPOINT_CACHE?: {
+    detected: boolean
+    api_mode?: string | null
+    streaming?: boolean | null
+    candidate_index?: number | null
+    supports_json_output?: boolean | null
+    supports_temperature?: boolean | null
+    supports_reasoning_effort?: boolean | null
+  }
+  AI_REASONING_EFFORT?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  AI_ANALYSIS_CONCURRENCY?: number
   PROXY_URL?: string
 }
 
@@ -147,7 +161,12 @@ export async function updateRotationSettings(settings: RotationSettings): Promis
   })
 }
 
-export async function testAiSettings(settings: AiSettings): Promise<{ success: boolean; message: string; response?: string }> {
+export async function testAiSettings(settings: AiSettings): Promise<{
+  success: boolean
+  message: string
+  response?: string
+  transport?: Record<string, unknown>
+}> {
   return await http('/api/settings/ai/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

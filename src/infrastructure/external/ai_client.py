@@ -6,13 +6,13 @@ import ipaddress
 import os
 import json
 import base64
-from typing import Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 from datetime import datetime
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from src.ai_reasoning import normalize_reasoning_effort
 from src.ai_message_builder import (
-    build_analysis_text_prompt,
-    build_user_message_content,
+    build_analysis_messages,
 )
 from src.infrastructure.config.settings import AISettings
 from src.infrastructure.config.env_manager import env_manager
@@ -23,9 +23,25 @@ from src.services.ai_request_compat import (
     create_ai_response_async,
     is_chat_completions_api_unsupported_error,
     is_json_output_unsupported_error,
+    is_reasoning_effort_unsupported_error,
     is_responses_api_unsupported_error,
     is_temperature_unsupported_error,
+    is_streaming_unsupported_error,
+    remove_reasoning_effort_param,
     remove_temperature_param,
+)
+from src.services.ai_endpoint_cache import (
+    AUTO_API_MODE,
+    AUTO_STREAM_MODE,
+    NON_STREAM_MODE,
+    SSE_STREAM_MODE,
+    EndpointCandidate,
+    EndpointCapabilityCache,
+    build_endpoint_candidates,
+    normalize_api_mode,
+    normalize_stream_mode,
+    order_candidates_from_cache,
+    preferred_api_modes,
 )
 from src.services.ai_response_parser import (
     EmptyAIResponseError,
@@ -69,10 +85,21 @@ def _sanitize_no_proxy_env() -> None:
 class AIClient:
     """AI 客户端封装"""
 
-    def __init__(self):
-        self.settings: Optional[AISettings] = None
+    def __init__(
+        self,
+        settings: Optional[AISettings] = None,
+        endpoint_cache: Optional[EndpointCapabilityCache] = None,
+    ):
+        self.settings: Optional[AISettings] = settings
         self.client: Optional[AsyncOpenAI] = None
-        self.refresh()
+        self.endpoint_cache = endpoint_cache
+        self._client_base_url = ""
+        self.last_resolution: Optional[dict] = None
+        if settings is None:
+            self.refresh()
+        else:
+            self._ensure_endpoint_cache()
+            self.client = self._initialize_client(self._initial_base_url())
 
     def _load_settings(self) -> None:
         load_dotenv(dotenv_path=env_manager.env_file, override=True)
@@ -80,9 +107,43 @@ class AIClient:
 
     def refresh(self) -> None:
         self._load_settings()
-        self.client = self._initialize_client()
+        self._ensure_endpoint_cache()
+        self.client = self._initialize_client(self._initial_base_url())
 
-    def _initialize_client(self) -> Optional[AsyncOpenAI]:
+    def _ensure_endpoint_cache(self) -> EndpointCapabilityCache:
+        cache = getattr(self, "endpoint_cache", None)
+        if cache is None:
+            cache = EndpointCapabilityCache(
+                ttl_seconds=getattr(
+                    self.settings,
+                    "endpoint_cache_ttl_seconds",
+                    None,
+                )
+            )
+            self.endpoint_cache = cache
+        return cache
+
+    def _initial_base_url(self) -> str:
+        base_url = str(getattr(self.settings, "base_url", "") or "").strip()
+        model = str(getattr(self.settings, "model_name", "") or "").strip()
+        candidates = build_endpoint_candidates(base_url)
+        if not candidates:
+            return base_url
+        cached = self._ensure_endpoint_cache().load(base_url, model)
+        if cached:
+            ordered = order_candidates_from_cache(
+                candidates,
+                cached.get("candidate_index"),
+            )
+            return ordered[0][1].base_url
+        return candidates[0].base_url
+
+    def _initialize_client(
+        self,
+        base_url: Optional[str] = None,
+        *,
+        track_base_url: bool = True,
+    ) -> Optional[AsyncOpenAI]:
         """初始化 OpenAI 客户端"""
         if not self.settings or not self.settings.is_configured():
             print("警告：AI 配置不完整，AI 功能将不可用")
@@ -96,10 +157,23 @@ class AIClient:
 
             _sanitize_no_proxy_env()
 
-            return AsyncOpenAI(
-                api_key=self.settings.api_key,
-                base_url=self.settings.base_url
-            )
+            resolved_base_url = str(base_url or self.settings.base_url).rstrip("/")
+            client_params = {
+                "api_key": self.settings.api_key,
+                "base_url": resolved_base_url,
+            }
+            timeout = getattr(self.settings, "timeout", None)
+            if timeout is not None:
+                client_params["timeout"] = timeout
+            proxy_url = str(getattr(self.settings, "proxy_url", "") or "").strip()
+            if proxy_url:
+                client_params["http_client"] = DefaultAsyncHttpxClient(
+                    proxy=proxy_url
+                )
+            client = AsyncOpenAI(**client_params)
+            if track_base_url:
+                self._client_base_url = resolved_base_url
+            return client
         except Exception as e:
             print(f"初始化 AI 客户端失败: {e}")
             return None
@@ -170,13 +244,11 @@ class AIClient:
             if base64_img:
                 image_data_urls.append(f"data:image/jpeg;base64,{base64_img}")
 
-        text_prompt = build_analysis_text_prompt(
+        return build_analysis_messages(
             product_json,
             prompt_text,
-            include_images=bool(image_data_urls),
+            image_data_urls,
         )
-        user_content = build_user_message_content(text_prompt, image_data_urls)
-        return [{"role": "user", "content": user_content}]
 
     async def _call_ai(
         self,
@@ -185,75 +257,233 @@ class AIClient:
         temperature: float = 0.1,
         max_output_tokens: int = 4000,
         enable_json_output: Optional[bool] = None,
+        on_text_delta: Optional[Callable[[str], Awaitable[None] | None]] = None,
     ) -> str:
-        """调用 AI API"""
-        api_mode = CHAT_COMPLETIONS_API_MODE
-        use_response_format = (
+        """Call an OpenAI-compatible API with endpoint and SSE discovery."""
+        requested_json_output = bool(
             self.settings.enable_response_format
             if enable_json_output is None
             else enable_json_output
         )
-        use_temperature = True
-        max_attempts = 4
-
-        for attempt in range(max_attempts):
-            request_params = build_ai_request_params(
-                api_mode,
-                model=self.settings.model_name,
-                messages=messages,
-                temperature=temperature,
-                max_output_tokens=max_output_tokens,
-                enable_json_output=use_response_format,
+        reasoning_effort = normalize_reasoning_effort(
+            getattr(self.settings, "reasoning_effort", "medium")
+        )
+        base_url = str(getattr(self.settings, "base_url", "") or "").strip()
+        model_name = str(self.settings.model_name)
+        auto_detect = bool(getattr(self.settings, "endpoint_auto_detect", True))
+        configured_api_mode = normalize_api_mode(
+            getattr(self.settings, "api_mode", AUTO_API_MODE)
+        )
+        stream_mode = normalize_stream_mode(
+            getattr(self.settings, "stream_mode", NON_STREAM_MODE)
+        )
+        cache = self._ensure_endpoint_cache()
+        cached = cache.load(base_url, model_name) if base_url else None
+        candidates = build_endpoint_candidates(base_url)
+        if not candidates:
+            candidates = [EndpointCandidate(base_url)]
+        if auto_detect:
+            ordered_candidates = order_candidates_from_cache(
+                candidates,
+                cached.get("candidate_index") if cached else None,
             )
-            if not use_temperature:
-                request_params = remove_temperature_param(request_params)
+        else:
+            ordered_candidates = list(enumerate(candidates[:1]))
 
-            if self.settings.enable_thinking:
-                request_params["extra_body"] = {"enable_thinking": False}
-
+        last_route_error: Optional[Exception] = None
+        max_empty_attempts = 4
+        for candidate_index, candidate in ordered_candidates:
+            candidate_client, temporary_client = self._client_for_candidate(
+                candidate.base_url
+            )
             try:
-                response = await create_ai_response_async(
-                    self.client,
-                    api_mode,
-                    request_params,
+                api_modes = preferred_api_modes(
+                    configured_api_mode,
+                    model=model_name,
+                    mode_hint=candidate.mode_hint,
                 )
-                return extract_ai_response_content(response)
-            except EmptyAIResponseError as exc:
-                if attempt < max_attempts - 1:
-                    print(
-                        f"AI响应为空，正在自动重试 ({attempt + 2}/{max_attempts})"
-                    )
-                    continue
-                raise exc
-            except Exception as exc:
-                changed = False
-                if (
-                    api_mode == CHAT_COMPLETIONS_API_MODE
-                    and is_chat_completions_api_unsupported_error(exc)
-                ):
-                    api_mode = RESPONSES_API_MODE
-                    changed = True
-                    print("当前服务未实现 Chat Completions API，正在自动回退到 Responses API")
-                elif (
-                    api_mode == RESPONSES_API_MODE
-                    and is_responses_api_unsupported_error(exc)
-                ):
-                    api_mode = CHAT_COMPLETIONS_API_MODE
-                    changed = True
-                    print("当前服务未实现 Responses API，正在自动回退到 Chat Completions API")
-                if use_response_format and is_json_output_unsupported_error(exc):
-                    use_response_format = False
-                    changed = True
-                    print("当前模型不支持结构化 JSON 输出，正在自动重试并移除该参数")
-                if use_temperature and is_temperature_unsupported_error(exc):
-                    use_temperature = False
-                    changed = True
-                    print("当前模型不支持 temperature 参数，正在自动重试并移除该参数")
-                if changed and attempt < max_attempts - 1:
-                    continue
-                raise
+                cached_matches_candidate = bool(
+                    cached and cached.get("candidate_index") == candidate_index
+                )
+                cached_mode = cached.get("api_mode") if cached_matches_candidate else None
+                if cached_mode in api_modes:
+                    api_modes = [cached_mode, *[m for m in api_modes if m != cached_mode]]
+                if not auto_detect:
+                    api_modes = api_modes[:1]
 
-        raise RuntimeError("AI 调用在兼容性重试后仍未返回结果")
+                for api_mode in api_modes:
+                    cached_matches_route = bool(
+                        cached_matches_candidate and cached_mode == api_mode
+                    )
+                    use_response_format = requested_json_output
+                    use_temperature = True
+                    use_reasoning_effort = True
+                    if cached_matches_route:
+                        use_response_format = cached.get(
+                            "supports_json_output",
+                            use_response_format,
+                        ) is not False
+                        use_temperature = cached.get(
+                            "supports_temperature",
+                            use_temperature,
+                        ) is not False
+                        use_reasoning_effort = cached.get(
+                            "supports_reasoning_effort",
+                            use_reasoning_effort,
+                        ) is not False
+
+                    stream_choices = self._stream_choices(
+                        stream_mode,
+                        cached.get("streaming") if cached_matches_route else None,
+                    )
+                    route_unsupported = False
+                    for use_streaming in stream_choices:
+                        stream_unsupported = False
+                        for empty_attempt in range(max_empty_attempts):
+                            request_params = build_ai_request_params(
+                                api_mode,
+                                model=model_name,
+                                messages=messages,
+                                temperature=temperature,
+                                max_output_tokens=max_output_tokens,
+                                reasoning_effort=reasoning_effort,
+                                enable_json_output=use_response_format,
+                            )
+                            if not use_temperature:
+                                request_params = remove_temperature_param(request_params)
+                            if not use_reasoning_effort:
+                                request_params = remove_reasoning_effort_param(request_params)
+                            if self.settings.enable_thinking:
+                                request_params["extra_body"] = {"enable_thinking": False}
+
+                            try:
+                                response = await create_ai_response_async(
+                                    candidate_client,
+                                    api_mode,
+                                    request_params,
+                                    stream=use_streaming,
+                                    on_text_delta=on_text_delta,
+                                )
+                                response_text = extract_ai_response_content(response)
+                                capabilities = {
+                                    "candidate_index": candidate_index,
+                                    "api_mode": api_mode,
+                                    "supports_temperature": bool(use_temperature),
+                                    "supports_reasoning_effort": bool(use_reasoning_effort),
+                                }
+                                if stream_mode != NON_STREAM_MODE:
+                                    capabilities["streaming"] = use_streaming
+                                elif cached_matches_route and "streaming" in cached:
+                                    capabilities["streaming"] = cached["streaming"]
+                                if requested_json_output:
+                                    capabilities["supports_json_output"] = bool(
+                                        use_response_format
+                                    )
+                                elif (
+                                    cached_matches_route
+                                    and "supports_json_output" in cached
+                                ):
+                                    capabilities["supports_json_output"] = cached[
+                                        "supports_json_output"
+                                    ]
+                                if base_url:
+                                    cache.save(base_url, model_name, capabilities)
+                                self.last_resolution = dict(capabilities)
+                                print(
+                                    "AI endpoint 已命中: "
+                                    f"candidate={candidate_index + 1}, api={api_mode}, "
+                                    f"stream={'sse' if use_streaming else 'off'}"
+                                )
+                                return response_text
+                            except EmptyAIResponseError as exc:
+                                if empty_attempt < max_empty_attempts - 1:
+                                    print(
+                                        "AI响应为空，正在自动重试 "
+                                        f"({empty_attempt + 2}/{max_empty_attempts})"
+                                    )
+                                    continue
+                                raise exc
+                            except Exception as exc:
+                                changed = False
+                                if use_response_format and is_json_output_unsupported_error(exc):
+                                    use_response_format = False
+                                    changed = True
+                                    print("当前模型不支持结构化 JSON 输出，正在移除该参数")
+                                if use_temperature and is_temperature_unsupported_error(exc):
+                                    use_temperature = False
+                                    changed = True
+                                    print("当前模型不支持 temperature 参数，正在移除该参数")
+                                if (
+                                    use_reasoning_effort
+                                    and is_reasoning_effort_unsupported_error(exc)
+                                ):
+                                    use_reasoning_effort = False
+                                    changed = True
+                                    print("当前模型不支持 reasoning effort，正在移除该参数")
+                                if changed:
+                                    continue
+
+                                if (
+                                    use_streaming
+                                    and stream_mode == AUTO_STREAM_MODE
+                                    and is_streaming_unsupported_error(exc)
+                                ):
+                                    stream_unsupported = True
+                                    last_route_error = exc
+                                    print("当前 endpoint 不支持 SSE，正在回退普通响应")
+                                    break
+
+                                unsupported = (
+                                    api_mode == CHAT_COMPLETIONS_API_MODE
+                                    and is_chat_completions_api_unsupported_error(exc)
+                                ) or (
+                                    api_mode == RESPONSES_API_MODE
+                                    and is_responses_api_unsupported_error(exc)
+                                )
+                                if unsupported and auto_detect:
+                                    route_unsupported = True
+                                    last_route_error = exc
+                                    print(
+                                        f"endpoint 未实现 {api_mode}，继续智能探测"
+                                    )
+                                    break
+                                raise
+                        if route_unsupported:
+                            break
+                        if stream_unsupported:
+                            continue
+                    if route_unsupported:
+                        continue
+            finally:
+                if temporary_client is not None:
+                    await temporary_client.close()
+
+        if last_route_error is not None:
+            raise last_route_error
+        raise RuntimeError("AI endpoint 探测完成，但没有可用的 API 路由")
+
+    def _client_for_candidate(
+        self,
+        base_url: str,
+    ) -> tuple[AsyncOpenAI, Optional[AsyncOpenAI]]:
+        if self.client is None:
+            raise RuntimeError("AI 客户端未初始化")
+        if not base_url or str(getattr(self, "_client_base_url", "")).rstrip("/") == base_url.rstrip("/"):
+            return self.client, None
+        temporary = self._initialize_client(base_url, track_base_url=False)
+        if temporary is None:
+            raise RuntimeError(f"无法为候选 endpoint 初始化 AI 客户端")
+        return temporary, temporary
+
+    @staticmethod
+    def _stream_choices(stream_mode: str, cached_streaming) -> list[bool]:
+        if stream_mode == NON_STREAM_MODE:
+            return [False]
+        if stream_mode == SSE_STREAM_MODE:
+            return [True]
+        if cached_streaming is False:
+            return [False]
+        return [True, False]
 
     def _parse_response(self, response_text: str) -> Optional[Dict]:
         """解析 AI 响应"""

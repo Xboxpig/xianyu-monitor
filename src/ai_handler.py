@@ -11,42 +11,32 @@ from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
 
 import requests
 
-# 设置标准输出编码为UTF-8，解决Windows控制台编码问题
-if sys.platform.startswith('win'):
-    import codecs
-    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())
-    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.detach())
+# 设置标准输出编码为 UTF-8。不要 detach：pytest、IDE 和 Web 进程可能持有包装流。
+if sys.platform.startswith("win"):
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8")
+            except (OSError, ValueError):
+                pass
 
 from src.config import (
     AI_DEBUG_MODE,
     IMAGE_DOWNLOAD_HEADERS,
     IMAGE_SAVE_DIR,
     TASK_IMAGE_DIR_PREFIX,
-    MODEL_NAME,
     ENABLE_RESPONSE_FORMAT,
-    client,
 )
 from src.ai_message_builder import (
-    build_analysis_text_prompt,
-    build_user_message_content,
+    build_analysis_messages,
 )
 from src.services.ai_response_parser import (
     EmptyAIResponseError,
-    extract_ai_response_content,
     parse_ai_response_json,
 )
-from src.services.ai_request_compat import (
-    CHAT_COMPLETIONS_API_MODE,
-    RESPONSES_API_MODE,
-    build_ai_request_params,
-    create_ai_response_async,
-    is_chat_completions_api_unsupported_error,
-    is_json_output_unsupported_error,
-    is_responses_api_unsupported_error,
-    is_temperature_unsupported_error,
-    remove_temperature_param,
-)
 from src.services.notification_service import build_notification_service
+from src.infrastructure.external.ai_client import AIClient
 from src.utils import convert_goofish_link, retry_on_failure
 
 
@@ -83,6 +73,10 @@ def _build_debug_request_summary(api_mode: str, request_params: dict) -> dict:
     }
     if "temperature" in request_params:
         summary["temperature"] = request_params["temperature"]
+    if "reasoning_effort" in request_params:
+        summary["reasoning_effort"] = request_params["reasoning_effort"]
+    if "reasoning" in request_params:
+        summary["reasoning"] = request_params["reasoning"]
     if "max_output_tokens" in request_params:
         summary["max_output_tokens"] = request_params["max_output_tokens"]
     if "max_tokens" in request_params:
@@ -297,10 +291,6 @@ async def send_ntfy_notification(product_data, reason):
 
 async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
     """将完整的商品JSON数据和所有图片发送给 AI 进行分析（异步）。"""
-    if not client:
-        safe_print("   [AI分析] 错误：AI客户端未初始化，跳过分析。")
-        return None
-
     item_info = product_data.get('商品信息', {})
     product_id = item_info.get('商品ID', 'N/A')
 
@@ -312,8 +302,6 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
         return None
 
     product_details_json = json.dumps(product_data, ensure_ascii=False, indent=2)
-    system_prompt = prompt_text
-
     if AI_DEBUG_MODE:
         safe_print("\n--- [AI DEBUG] ---")
         safe_print("--- PRODUCT DATA (JSON) ---")
@@ -329,13 +317,11 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
             if base64_image:
                 image_data_urls.append(f"data:image/jpeg;base64,{base64_image}")
 
-    combined_text_prompt = build_analysis_text_prompt(
+    messages = build_analysis_messages(
         product_details_json,
-        system_prompt,
-        include_images=bool(image_data_urls),
+        prompt_text,
+        image_data_urls,
     )
-    user_content = build_user_message_content(combined_text_prompt, image_data_urls)
-    messages = [{"role": "user", "content": user_content}]
 
     # 保存最终传输内容到日志文件
     try:
@@ -370,46 +356,32 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
 
     # 增强的AI调用，包含更严格的结构化输出控制和重试机制
     max_retries = 4
-    api_mode = CHAT_COMPLETIONS_API_MODE
-    use_response_format = ENABLE_RESPONSE_FORMAT
-    use_temperature = True
     for attempt in range(max_retries):
         try:
             # 根据重试次数调整参数
             current_temperature = 0.1 if attempt == 0 else 0.05  # 重试时使用更低的温度
 
-            from src.config import get_ai_request_params
-
-            request_params = build_ai_request_params(
-                api_mode,
-                model=MODEL_NAME,
-                messages=messages,
-                temperature=current_temperature,
-                max_output_tokens=4000,
-                enable_json_output=use_response_format,
-            )
-            if not use_temperature:
-                request_params = remove_temperature_param(request_params)
-
-            request_params = get_ai_request_params(**request_params)
-
-            if AI_DEBUG_MODE:
-                safe_print(f"\n--- [AI DEBUG] 第{attempt + 1}次尝试 REQUEST ---")
-                safe_print(
-                    json.dumps(
-                        _build_debug_request_summary(api_mode, request_params),
-                        ensure_ascii=False,
-                        indent=2,
-                    )
+            ai_client = AIClient()
+            if not ai_client.is_available():
+                raise RuntimeError("AI 客户端未初始化")
+            try:
+                ai_response_content = await ai_client._call_ai(
+                    messages,
+                    temperature=current_temperature,
+                    max_output_tokens=4000,
+                    enable_json_output=ENABLE_RESPONSE_FORMAT,
                 )
-                safe_print("-----------------------------------\n")
-
-            response = await create_ai_response_async(
-                client,
-                api_mode,
-                request_params,
-            )
-            ai_response_content = extract_ai_response_content(response)
+                if AI_DEBUG_MODE:
+                    safe_print(
+                        "--- [AI DEBUG] TRANSPORT ---\n"
+                        + json.dumps(
+                            ai_client.last_resolution or {},
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+            finally:
+                await ai_client.close()
 
             if AI_DEBUG_MODE:
                 safe_print(f"\n--- [AI DEBUG] 第{attempt + 1}次尝试 ---")
@@ -443,35 +415,14 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
                 raise e
 
         except Exception as e:
-            if (
-                api_mode == CHAT_COMPLETIONS_API_MODE
-                and is_chat_completions_api_unsupported_error(e)
-            ):
-                api_mode = RESPONSES_API_MODE
-                safe_print(
-                    "   [AI分析] 当前服务未实现 Chat Completions API，后续重试将自动回退到 Responses API。"
-                )
-            elif api_mode == RESPONSES_API_MODE and is_responses_api_unsupported_error(e):
-                api_mode = CHAT_COMPLETIONS_API_MODE
-                safe_print(
-                    "   [AI分析] 当前服务未实现 Responses API，后续重试将自动回退到 Chat Completions API。"
-                )
-            if use_response_format and is_json_output_unsupported_error(e):
-                use_response_format = False
-                safe_print(
-                    "   [AI分析] 当前模型不支持结构化 JSON 输出，后续重试将自动禁用该参数。"
-                )
-            if use_temperature and is_temperature_unsupported_error(e):
-                use_temperature = False
-                safe_print(
-                    "   [AI分析] 当前模型不支持 temperature 参数，后续重试将自动禁用该参数。"
-                )
             if AI_DEBUG_MODE:
                 safe_print(f"\n--- [AI DEBUG] 第{attempt + 1}次尝试 EXCEPTION ---")
                 safe_print(repr(e))
                 safe_print(traceback.format_exc())
                 safe_print("-------------------------------------\n")
             safe_print(f"   [AI分析] 第{attempt + 1}次尝试AI调用失败: {e}")
+            if isinstance(e, EmptyAIResponseError):
+                raise
             if attempt < max_retries - 1:
                 safe_print(f"   [AI分析] 准备第{attempt + 2}次重试...")
                 continue

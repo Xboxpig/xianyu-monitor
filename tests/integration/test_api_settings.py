@@ -20,6 +20,13 @@ _SETTINGS_ENV_KEYS = [
     "OPENAI_API_KEY",
     "OPENAI_BASE_URL",
     "OPENAI_MODEL_NAME",
+    "AI_API_MODE",
+    "AI_STREAM_MODE",
+    "AI_ENDPOINT_AUTO_DETECT",
+    "AI_ENDPOINT_CACHE_FILE",
+    "AI_ENDPOINT_CACHE_TTL_SECONDS",
+    "AI_REASONING_EFFORT",
+    "AI_ANALYSIS_CONCURRENCY",
     "SKIP_AI_ANALYSIS",
     "PROXY_URL",
     "NTFY_TOPIC_URL",
@@ -328,6 +335,8 @@ def test_ai_settings_fall_back_to_runtime_environment_when_env_file_missing(tmp_
     monkeypatch.setenv("OPENAI_API_KEY", "runtime-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://runtime.example.com/v1")
     monkeypatch.setenv("OPENAI_MODEL_NAME", "runtime-model")
+    monkeypatch.setenv("AI_REASONING_EFFORT", "high")
+    monkeypatch.setenv("AI_ANALYSIS_CONCURRENCY", "4")
     monkeypatch.setenv("PROXY_URL", "http://127.0.0.1:7890")
     client = _build_settings_client()
 
@@ -336,6 +345,12 @@ def test_ai_settings_fall_back_to_runtime_environment_when_env_file_missing(tmp_
     assert ai_response.json() == {
         "OPENAI_BASE_URL": "https://runtime.example.com/v1",
         "OPENAI_MODEL_NAME": "runtime-model",
+        "AI_API_MODE": "auto",
+        "AI_STREAM_MODE": "auto",
+        "AI_ENDPOINT_AUTO_DETECT": True,
+        "AI_ENDPOINT_CACHE": {"detected": False},
+        "AI_REASONING_EFFORT": "high",
+        "AI_ANALYSIS_CONCURRENCY": 4,
         "SKIP_AI_ANALYSIS": False,
         "PROXY_URL": "http://127.0.0.1:7890",
     }
@@ -347,6 +362,56 @@ def test_ai_settings_fall_back_to_runtime_environment_when_env_file_missing(tmp_
     assert env_payload["openai_api_key_set"] is True
     assert env_payload["openai_base_url_set"] is True
     assert env_payload["openai_model_name_set"] is True
+
+
+def test_ai_settings_update_persists_valid_concurrency_and_rejects_invalid_values(
+    tmp_path, monkeypatch
+):
+    _clear_settings_env(monkeypatch)
+    env_file = tmp_path / ".env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(env_manager, "env_file", env_file)
+    client = _build_settings_client()
+
+    response = client.put(
+        "/api/settings/ai",
+        json={"AI_ANALYSIS_CONCURRENCY": 6},
+    )
+    assert response.status_code == 200
+    assert "AI_ANALYSIS_CONCURRENCY=6" in env_file.read_text(encoding="utf-8")
+    assert client.get("/api/settings/ai").json()["AI_ANALYSIS_CONCURRENCY"] == 6
+
+    assert client.put(
+        "/api/settings/ai",
+        json={"AI_ANALYSIS_CONCURRENCY": 0},
+    ).status_code == 422
+    assert client.put(
+        "/api/settings/ai",
+        json={"AI_ANALYSIS_CONCURRENCY": 33},
+    ).status_code == 422
+
+
+def test_ai_settings_update_persists_reasoning_effort_and_rejects_invalid_value(
+    tmp_path, monkeypatch
+):
+    _clear_settings_env(monkeypatch)
+    env_file = tmp_path / ".env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setattr(env_manager, "env_file", env_file)
+    client = _build_settings_client()
+
+    response = client.put(
+        "/api/settings/ai",
+        json={"AI_REASONING_EFFORT": "xhigh"},
+    )
+    assert response.status_code == 200
+    assert "AI_REASONING_EFFORT=xhigh" in env_file.read_text(encoding="utf-8")
+    assert client.get("/api/settings/ai").json()["AI_REASONING_EFFORT"] == "xhigh"
+
+    assert client.put(
+        "/api/settings/ai",
+        json={"AI_REASONING_EFFORT": "ultra"},
+    ).status_code == 422
 
 
 def test_notification_settings_fall_back_to_runtime_environment_when_env_file_missing(
@@ -382,6 +447,10 @@ def test_ai_test_endpoint_falls_back_to_responses_when_chat_completions_api_404(
     env_file = tmp_path / ".env"
     env_file.write_text("", encoding="utf-8")
     monkeypatch.setattr(env_manager, "env_file", env_file)
+    monkeypatch.setenv(
+        "AI_ENDPOINT_CACHE_FILE",
+        str(tmp_path / "ai-endpoint-capabilities.json"),
+    )
     client = _build_settings_client()
     request_history = []
 
@@ -404,7 +473,7 @@ def test_ai_test_endpoint_falls_back_to_responses_when_chat_completions_api_404(
                 },
             )()
 
-        def _responses_create(self, **kwargs):
+        async def _responses_create(self, **kwargs):
             request_history.append(("responses", kwargs))
             return type(
                 "_Response",
@@ -412,13 +481,16 @@ def test_ai_test_endpoint_falls_back_to_responses_when_chat_completions_api_404(
                 {"output_text": "OK"},
             )()
 
-        def _chat_create(self, **kwargs):
+        async def _chat_create(self, **kwargs):
             request_history.append(("chat", kwargs))
             raise Exception("Error code: 404 - page not found")
 
-    import openai
+        async def close(self):
+            return None
 
-    monkeypatch.setattr(openai, "OpenAI", _FakeOpenAI)
+    import src.infrastructure.external.ai_client as ai_client_module
+
+    monkeypatch.setattr(ai_client_module, "AsyncOpenAI", _FakeOpenAI)
 
     response = client.post(
         "/api/settings/ai/test",
@@ -426,6 +498,8 @@ def test_ai_test_endpoint_falls_back_to_responses_when_chat_completions_api_404(
             "OPENAI_API_KEY": "demo",
             "OPENAI_BASE_URL": "https://example.com/v1/",
             "OPENAI_MODEL_NAME": "demo-model",
+            "AI_STREAM_MODE": "off",
+            "AI_REASONING_EFFORT": "high",
         },
     )
 
@@ -434,6 +508,8 @@ def test_ai_test_endpoint_falls_back_to_responses_when_chat_completions_api_404(
     assert payload["success"] is True
     assert payload["response"] == "OK"
     assert request_history[0][0] == "chat"
+    assert request_history[0][1]["reasoning_effort"] == "high"
     assert request_history[0][1]["messages"][0]["content"] == settings.AI_TEST_PROMPT
     assert request_history[1][0] == "responses"
+    assert request_history[1][1]["reasoning"] == {"effort": "high"}
     assert request_history[1][1]["input"][0]["content"][0]["text"] == settings.AI_TEST_PROMPT

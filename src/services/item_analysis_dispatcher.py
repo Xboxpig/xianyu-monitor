@@ -33,7 +33,7 @@ class ItemAnalysisJob:
 
 
 class ItemAnalysisDispatcher:
-    """用受控并发处理商品分析和落盘。"""
+    """用内存队列缓存待处理商品，并由固定数量 worker 并发处理。"""
 
     def __init__(
         self,
@@ -46,28 +46,63 @@ class ItemAnalysisDispatcher:
         notifier: Notifier,
         saver: Saver,
     ) -> None:
-        self._semaphore = asyncio.Semaphore(max(1, concurrency))
+        self._concurrency = max(1, concurrency)
         self._skip_ai_analysis = skip_ai_analysis
         self._seller_loader = seller_loader
         self._image_downloader = image_downloader
         self._ai_analyzer = ai_analyzer
         self._notifier = notifier
         self._saver = saver
-        self._tasks: set[asyncio.Task] = set()
+        self._queue: asyncio.Queue[ItemAnalysisJob] = asyncio.Queue()
+        self._workers: list[asyncio.Task] = []
+        self._worker_errors: list[Exception] = []
         self.completed_count = 0
 
+    @property
+    def concurrency(self) -> int:
+        return self._concurrency
+
+    @property
+    def pending_count(self) -> int:
+        return self._queue.qsize()
+
     def submit(self, job: ItemAnalysisJob) -> None:
-        task = asyncio.create_task(self._process_with_limit(job))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._ensure_workers()
+        self._queue.put_nowait(job)
 
     async def join(self) -> None:
-        while self._tasks:
-            await asyncio.gather(*tuple(self._tasks))
+        if not self._workers and self._queue.empty():
+            return
+        self._ensure_workers()
+        await self._queue.join()
+        workers = tuple(self._workers)
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+        self._workers.clear()
+        if self._worker_errors:
+            error = self._worker_errors.pop(0)
+            self._worker_errors.clear()
+            raise error
 
-    async def _process_with_limit(self, job: ItemAnalysisJob) -> None:
-        async with self._semaphore:
-            await self._process_job(job)
+    def _ensure_workers(self) -> None:
+        if self._workers:
+            return
+        self._workers = [
+            asyncio.create_task(self._worker(worker_index))
+            for worker_index in range(self._concurrency)
+        ]
+
+    async def _worker(self, worker_index: int) -> None:
+        while True:
+            job = await self._queue.get()
+            try:
+                await self._process_job(job)
+            except Exception as exc:
+                self._worker_errors.append(exc)
+                print(f"   [AI队列] Worker {worker_index + 1} 处理失败: {exc}")
+            finally:
+                self._queue.task_done()
 
     async def _process_job(self, job: ItemAnalysisJob) -> None:
         record = copy.deepcopy(job.final_record)

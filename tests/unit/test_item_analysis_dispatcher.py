@@ -67,6 +67,8 @@ def test_item_analysis_dispatcher_uses_bounded_concurrency():
                     registration_duration_text="来闲鱼1年",
                 )
             )
+        assert dispatcher.pending_count == 3
+        assert dispatcher.concurrency == 2
         await dispatcher.join()
         return dispatcher
 
@@ -75,6 +77,7 @@ def test_item_analysis_dispatcher_uses_bounded_concurrency():
     assert len(saved_records) == 3
     assert len(notifications) == 3
     assert max_active_ai_calls == 2
+    assert dispatcher.pending_count == 0
     assert saved_records[0][1]["卖家信息"]["卖家ID"].startswith("seller-")
 
 

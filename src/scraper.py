@@ -241,7 +241,7 @@ def _get_rotation_settings(task_config: dict) -> dict:
 def _get_ai_analysis_concurrency(task_config: dict) -> int:
     configured = task_config.get("ai_analysis_concurrency")
     default = _as_int(os.getenv("AI_ANALYSIS_CONCURRENCY"), 2)
-    return max(1, _as_int(configured, default))
+    return max(1, min(32, _as_int(configured, default)))
 
 
 def _get_seller_profile_cache_ttl(task_config: dict) -> int:
@@ -1190,7 +1190,10 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                                 processed_links.add(unique_key)
                                 processed_item_count += 1
                                 log_time(
-                                    f"商品已提交后台分析。累计处理 {processed_item_count} 个新商品。"
+                                    "商品已提交后台分析。"
+                                    f"累计处理 {processed_item_count} 个新商品，"
+                                    f"待分析队列 {analysis_dispatcher.pending_count}，"
+                                    f"并发 {analysis_dispatcher.concurrency}。"
                                 )
 
                                 # --- 修改: 增加单个商品处理后的主要延迟 ---

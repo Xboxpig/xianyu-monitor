@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { toast } from '@/components/ui/toast'
 import { getPromptContent, listPrompts, updatePrompt } from '@/api/prompts'
 import NotificationSettingsPanel from '@/components/settings/NotificationSettingsPanel.vue'
@@ -37,6 +38,7 @@ const {
 const activeTab = ref('ai')
 const route = useRoute()
 const validTabs = new Set(['notifications', 'ai', 'rotation', 'status', 'prompts'])
+const reasoningEfforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 const promptFiles = ref<string[]>([])
 const selectedPrompt = ref<string | null>(null)
@@ -221,6 +223,74 @@ watch(selectedPrompt, async (value) => {
             <div class="grid gap-2">
               <Label>{{ t('settings.ai.modelName') }}</Label>
               <Input v-model="aiSettings.OPENAI_MODEL_NAME" placeholder="gpt-3.5-turbo" />
+            </div>
+            <div class="grid gap-4 md:grid-cols-2">
+              <div class="grid gap-2">
+                <Label>{{ t('settings.ai.apiMode') }}</Label>
+                <Select v-model="aiSettings.AI_API_MODE">
+                  <SelectTrigger><SelectValue placeholder="auto" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="chat_completions">Chat Completions</SelectItem>
+                    <SelectItem value="responses">Responses</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="grid gap-2">
+                <Label>{{ t('settings.ai.streamMode') }}</Label>
+                <Select v-model="aiSettings.AI_STREAM_MODE">
+                  <SelectTrigger><SelectValue placeholder="auto" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="sse">SSE</SelectItem>
+                    <SelectItem value="off">Off</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div class="flex items-center justify-between rounded-lg border p-3">
+              <div>
+                <Label>{{ t('settings.ai.endpointAutoDetect') }}</Label>
+                <p class="text-xs text-gray-500">{{ t('settings.ai.endpointAutoDetectHint') }}</p>
+              </div>
+              <Switch v-model:checked="aiSettings.AI_ENDPOINT_AUTO_DETECT" />
+            </div>
+            <p class="text-xs text-gray-500">
+              {{ aiSettings.AI_ENDPOINT_CACHE?.detected
+                ? t('settings.ai.endpointCacheHit', {
+                    mode: aiSettings.AI_ENDPOINT_CACHE.api_mode || '-',
+                    stream: aiSettings.AI_ENDPOINT_CACHE.streaming === true ? 'SSE' : 'off'
+                  })
+                : t('settings.ai.endpointCacheMiss') }}
+            </p>
+            <div class="grid gap-2">
+              <Label>{{ t('settings.ai.reasoningEffort') }}</Label>
+              <Select v-model="aiSettings.AI_REASONING_EFFORT">
+                <SelectTrigger>
+                  <SelectValue placeholder="medium" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="effort in reasoningEfforts"
+                    :key="effort"
+                    :value="effort"
+                  >
+                    {{ effort }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-xs text-gray-500">{{ t('settings.ai.reasoningEffortHint') }}</p>
+            </div>
+            <div class="grid gap-2">
+              <Label>{{ t('settings.ai.concurrency') }}</Label>
+              <Input
+                v-model.number="aiSettings.AI_ANALYSIS_CONCURRENCY"
+                type="number"
+                min="1"
+                max="32"
+                step="1"
+              />
+              <p class="text-xs text-gray-500">{{ t('settings.ai.concurrencyHint') }}</p>
             </div>
             <div class="grid gap-2">
               <Label>{{ t('settings.ai.proxy') }}</Label>

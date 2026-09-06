@@ -43,6 +43,16 @@ class AISettings(_EnvSettings):
     api_key: Optional[str] = _env_field(None, "OPENAI_API_KEY")
     base_url: str = _env_field("", "OPENAI_BASE_URL")
     model_name: str = _env_field("", "OPENAI_MODEL_NAME")
+    api_mode: str = _env_field("auto", "AI_API_MODE")
+    stream_mode: str = _env_field("auto", "AI_STREAM_MODE")
+    endpoint_auto_detect: bool = _env_field(True, "AI_ENDPOINT_AUTO_DETECT")
+    endpoint_cache_ttl_seconds: int = _env_field(
+        604800,
+        "AI_ENDPOINT_CACHE_TTL_SECONDS",
+        ge=0,
+    )
+    reasoning_effort: str = _env_field("medium", "AI_REASONING_EFFORT")
+    analysis_concurrency: int = _env_field(2, "AI_ANALYSIS_CONCURRENCY", ge=1, le=32)
     proxy_url: Optional[str] = _env_field(None, "PROXY_URL")
     debug_mode: bool = _env_field(False, "AI_DEBUG_MODE")
     enable_response_format: bool = _env_field(True, "ENABLE_RESPONSE_FORMAT")

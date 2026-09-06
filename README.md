@@ -187,6 +187,10 @@ cd web-ui && npm run build
 ### AI 与运行时
 
 - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL_NAME`：AI 模型接入必填项。
+- `AI_API_MODE`：`auto`、`chat_completions` 或 `responses`；默认 `auto`。
+- `AI_STREAM_MODE`：`auto`、`sse` 或 `off`；默认自动尝试原生 SSE，不支持时回退普通响应。
+- `AI_ENDPOINT_AUTO_DETECT`：自动补全 `/v1`，并探测 Responses / Chat Completions endpoint。
+- `AI_ENDPOINT_CACHE_TTL_SECONDS`：探测结果缓存时间，默认 7 天，设为 `0` 永不过期。缓存键由 Base URL 与模型生成，只保存 endpoint/protocol 能力，不保存 API Key、Prompt、商品数据或 AI 回答。
 - `PROXY_URL`：为 AI 请求单独指定 HTTP/SOCKS5 代理。
 - `RUN_HEADLESS`：是否以无头模式运行爬虫；Docker 中应保持 `true`。
 - `SERVER_PORT`：后端监听端口，默认 `8000`。

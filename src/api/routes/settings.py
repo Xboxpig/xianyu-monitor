@@ -2,12 +2,18 @@
 设置管理路由
 """
 import os
-from typing import Optional
+from types import SimpleNamespace
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from src.ai_reasoning import (
+    DEFAULT_REASONING_EFFORT,
+    ReasoningEffort,
+    normalize_reasoning_effort,
+)
 from src.api.dependencies import get_process_service
 from src.infrastructure.config.env_manager import env_manager
 from src.infrastructure.config.settings import (
@@ -15,15 +21,8 @@ from src.infrastructure.config.settings import (
     reload_settings,
     scraper_settings,
 )
-from src.services.ai_request_compat import (
-    CHAT_COMPLETIONS_API_MODE,
-    RESPONSES_API_MODE,
-    build_ai_request_params,
-    create_ai_response_sync,
-    is_chat_completions_api_unsupported_error,
-    is_responses_api_unsupported_error,
-)
-from src.services.ai_response_parser import extract_ai_response_content
+from src.infrastructure.external.ai_client import AIClient
+from src.services.ai_endpoint_cache import EndpointCapabilityCache
 from src.services.notification_config_service import (
     NotificationSettingsValidationError,
     build_configured_channels,
@@ -102,6 +101,11 @@ class AISettingsModel(BaseModel):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
     OPENAI_MODEL_NAME: Optional[str] = None
+    AI_API_MODE: Optional[Literal["auto", "chat_completions", "responses"]] = None
+    AI_STREAM_MODE: Optional[Literal["auto", "sse", "off"]] = None
+    AI_ENDPOINT_AUTO_DETECT: Optional[bool] = None
+    AI_REASONING_EFFORT: Optional[ReasoningEffort] = None
+    AI_ANALYSIS_CONCURRENCY: Optional[int] = Field(None, ge=1, le=32)
     SKIP_AI_ANALYSIS: Optional[bool] = None
     PROXY_URL: Optional[str] = None
 
@@ -254,9 +258,28 @@ async def get_system_status(
 
 @router.get("/ai")
 async def get_ai_settings():
+    base_url = env_manager.get_value("OPENAI_BASE_URL", "")
+    model_name = env_manager.get_value("OPENAI_MODEL_NAME", "")
+    cache = EndpointCapabilityCache(
+        ttl_seconds=_env_int("AI_ENDPOINT_CACHE_TTL_SECONDS", 604800)
+    )
     return {
-        "OPENAI_BASE_URL": env_manager.get_value("OPENAI_BASE_URL", ""),
-        "OPENAI_MODEL_NAME": env_manager.get_value("OPENAI_MODEL_NAME", ""),
+        "OPENAI_BASE_URL": base_url,
+        "OPENAI_MODEL_NAME": model_name,
+        "AI_API_MODE": env_manager.get_value("AI_API_MODE", "auto"),
+        "AI_STREAM_MODE": env_manager.get_value("AI_STREAM_MODE", "auto"),
+        "AI_ENDPOINT_AUTO_DETECT": _env_bool("AI_ENDPOINT_AUTO_DETECT", True),
+        "AI_ENDPOINT_CACHE": cache.summary(base_url, model_name),
+        "AI_REASONING_EFFORT": normalize_reasoning_effort(
+            env_manager.get_value(
+                "AI_REASONING_EFFORT",
+                DEFAULT_REASONING_EFFORT,
+            )
+        ),
+        "AI_ANALYSIS_CONCURRENCY": max(
+            1,
+            min(32, _env_int("AI_ANALYSIS_CONCURRENCY", 2)),
+        ),
         "SKIP_AI_ANALYSIS": env_manager.get_value("SKIP_AI_ANALYSIS", "false").lower() == "true",
         "PROXY_URL": env_manager.get_value("PROXY_URL", ""),
     }
@@ -271,6 +294,18 @@ async def update_ai_settings(settings: AISettingsModel):
         updates["OPENAI_BASE_URL"] = settings.OPENAI_BASE_URL
     if settings.OPENAI_MODEL_NAME is not None:
         updates["OPENAI_MODEL_NAME"] = settings.OPENAI_MODEL_NAME
+    if settings.AI_API_MODE is not None:
+        updates["AI_API_MODE"] = settings.AI_API_MODE
+    if settings.AI_STREAM_MODE is not None:
+        updates["AI_STREAM_MODE"] = settings.AI_STREAM_MODE
+    if settings.AI_ENDPOINT_AUTO_DETECT is not None:
+        updates["AI_ENDPOINT_AUTO_DETECT"] = _normalize_bool_value(
+            settings.AI_ENDPOINT_AUTO_DETECT
+        )
+    if settings.AI_REASONING_EFFORT is not None:
+        updates["AI_REASONING_EFFORT"] = settings.AI_REASONING_EFFORT
+    if settings.AI_ANALYSIS_CONCURRENCY is not None:
+        updates["AI_ANALYSIS_CONCURRENCY"] = str(settings.AI_ANALYSIS_CONCURRENCY)
     if settings.SKIP_AI_ANALYSIS is not None:
         updates["SKIP_AI_ANALYSIS"] = str(settings.SKIP_AI_ANALYSIS).lower()
     if settings.PROXY_URL is not None:
@@ -286,62 +321,71 @@ async def update_ai_settings(settings: AISettingsModel):
 @router.post("/ai/test")
 async def test_ai_settings(settings: dict):
     """测试AI模型设置是否有效"""
+    ai_client = None
     try:
-        from openai import OpenAI
-        import httpx
-
         stored_api_key = env_manager.get_value("OPENAI_API_KEY", "")
         submitted_api_key = settings.get("OPENAI_API_KEY", "")
         api_key = submitted_api_key or stored_api_key
-
-        client_params = {
-            "api_key": api_key,
-            "base_url": settings.get("OPENAI_BASE_URL", ""),
-            "timeout": httpx.Timeout(30.0),
-        }
-
-        proxy_url = settings.get("PROXY_URL", "")
-        if proxy_url:
-            client_params["http_client"] = httpx.Client(proxy=proxy_url)
-
-        model_name = settings.get("OPENAI_MODEL_NAME", "")
-        client = OpenAI(**client_params)
+        base_url = settings.get("OPENAI_BASE_URL") or env_manager.get_value(
+            "OPENAI_BASE_URL",
+            "",
+        )
+        model_name = settings.get("OPENAI_MODEL_NAME") or env_manager.get_value(
+            "OPENAI_MODEL_NAME",
+            "",
+        )
+        reasoning_effort = normalize_reasoning_effort(
+            settings.get("AI_REASONING_EFFORT")
+            or env_manager.get_value(
+                "AI_REASONING_EFFORT",
+                DEFAULT_REASONING_EFFORT,
+            )
+        )
         messages = [{"role": "user", "content": AI_TEST_PROMPT}]
-        api_mode = CHAT_COMPLETIONS_API_MODE
-
-        try:
-            response = create_ai_response_sync(
-                client,
-                api_mode,
-                build_ai_request_params(
-                    api_mode,
-                    model=model_name,
-                    messages=messages,
-                    max_output_tokens=AI_TEST_MAX_OUTPUT_TOKENS,
-                ),
-            )
-        except Exception as exc:
-            if not is_chat_completions_api_unsupported_error(exc):
-                raise
-            api_mode = RESPONSES_API_MODE
-            response = create_ai_response_sync(
-                client,
-                api_mode,
-                build_ai_request_params(
-                    api_mode,
-                    model=model_name,
-                    messages=messages,
-                    max_output_tokens=AI_TEST_MAX_OUTPUT_TOKENS,
-                ),
-            )
+        endpoint_auto_detect = settings.get("AI_ENDPOINT_AUTO_DETECT")
+        if endpoint_auto_detect is None:
+            endpoint_auto_detect = _env_bool("AI_ENDPOINT_AUTO_DETECT", True)
+        test_settings = SimpleNamespace(
+            api_key=api_key,
+            base_url=base_url,
+            model_name=model_name,
+            api_mode=settings.get("AI_API_MODE")
+            or env_manager.get_value("AI_API_MODE", "auto"),
+            stream_mode=settings.get("AI_STREAM_MODE")
+            or env_manager.get_value("AI_STREAM_MODE", "auto"),
+            endpoint_auto_detect=bool(endpoint_auto_detect),
+            endpoint_cache_ttl_seconds=_env_int(
+                "AI_ENDPOINT_CACHE_TTL_SECONDS",
+                604800,
+            ),
+            reasoning_effort=reasoning_effort,
+            proxy_url=settings.get("PROXY_URL")
+            or env_manager.get_value("PROXY_URL", ""),
+            enable_response_format=False,
+            enable_thinking=_env_bool("ENABLE_THINKING", False),
+            timeout=30.0,
+            is_configured=lambda: bool(base_url and model_name),
+        )
+        ai_client = AIClient(settings=test_settings)
+        if not ai_client.is_available():
+            raise RuntimeError("AI客户端未初始化，请检查 Base URL 和模型名称。")
+        response_text = await ai_client._call_ai(
+            messages,
+            max_output_tokens=AI_TEST_MAX_OUTPUT_TOKENS,
+            enable_json_output=False,
+        )
 
         return {
             "success": True,
             "message": "AI模型连接测试成功！",
-            "response": extract_ai_response_content(response),
+            "response": response_text,
+            "transport": ai_client.last_resolution,
         }
     except Exception as exc:
         return {
             "success": False,
             "message": f"AI模型连接测试失败: {exc}",
         }
+    finally:
+        if ai_client is not None:
+            await ai_client.close()

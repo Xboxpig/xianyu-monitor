@@ -174,6 +174,10 @@ cd web-ui && npm run build
 ### AI and Runtime
 
 - `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL_NAME`: required AI model settings.
+- `AI_API_MODE`: `auto`, `chat_completions`, or `responses`; defaults to `auto`.
+- `AI_STREAM_MODE`: `auto`, `sse`, or `off`; auto mode tries native SSE first and falls back to a regular response when unsupported.
+- `AI_ENDPOINT_AUTO_DETECT`: completes `/v1` and probes Responses / Chat Completions endpoints.
+- `AI_ENDPOINT_CACHE_TTL_SECONDS`: capability-cache lifetime; defaults to seven days and `0` never expires. The cache is keyed by Base URL and model and stores only endpoint/protocol capabilities, never API keys, prompts, item data, or AI responses.
 - `PROXY_URL`: dedicated HTTP/SOCKS5 proxy for AI requests.
 - `RUN_HEADLESS`: whether the scraper runs headless; keep it `true` in Docker.
 - `SERVER_PORT`: backend port, default `8000`.
