@@ -382,6 +382,59 @@ def test_call_ai_prefers_cached_candidate_and_api_mode(tmp_path):
     assert "response_format" not in request_history[0][1]
 
 
+def test_call_ai_explicit_json_disable_overrides_cached_support(tmp_path):
+    base_url = "https://gateway.example.com/v1"
+    model_name = "gpt-demo"
+    cache = EndpointCapabilityCache(
+        path=tmp_path / "capabilities.json",
+        ttl_seconds=60,
+    )
+    cache.save(
+        base_url,
+        model_name,
+        {
+            "candidate_index": 0,
+            "api_mode": "responses",
+            "streaming": False,
+            "supports_json_output": True,
+            "supports_temperature": True,
+            "supports_reasoning_effort": True,
+        },
+    )
+    client = AIClient.__new__(AIClient)
+    client.settings = SimpleNamespace(
+        base_url=base_url,
+        model_name=model_name,
+        api_mode="responses",
+        stream_mode="off",
+        endpoint_auto_detect=True,
+        reasoning_effort="medium",
+        enable_response_format=True,
+        enable_thinking=False,
+    )
+    request_history = []
+
+    async def fake_responses_create(**kwargs):
+        request_history.append(kwargs)
+        return SimpleNamespace(output_text="plain criteria text")
+
+    fake_client = _build_fake_client(fake_responses_create)
+    client.client = fake_client
+    client.endpoint_cache = cache
+    client._client_base_url = base_url
+    client.last_resolution = None
+
+    response = asyncio.run(
+        client._call_ai(
+            [{"role": "user", "content": "generate criteria"}],
+            enable_json_output=False,
+        )
+    )
+
+    assert response == "plain criteria text"
+    assert "text" not in request_history[0]
+
+
 def test_call_ai_tries_next_url_candidate_after_both_apis_return_404(tmp_path):
     base_url = "https://gateway.example.com"
     client = AIClient.__new__(AIClient)

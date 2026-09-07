@@ -319,10 +319,10 @@ class AIClient:
                     use_temperature = True
                     use_reasoning_effort = True
                     if cached_matches_route:
-                        use_response_format = cached.get(
-                            "supports_json_output",
-                            use_response_format,
-                        ) is not False
+                        use_response_format = bool(
+                            requested_json_output
+                            and cached.get("supports_json_output", True) is not False
+                        )
                         use_temperature = cached.get(
                             "supports_temperature",
                             use_temperature,
