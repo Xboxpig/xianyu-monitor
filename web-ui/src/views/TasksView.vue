@@ -3,11 +3,13 @@ import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useTasks } from '@/composables/useTasks'
+import { useTaskGenerationJob } from '@/composables/useTaskGenerationJob'
 import type { Task, TaskUpdate } from '@/types/task.d.ts'
 import { parseTaskFormDefaults } from '@/lib/taskFormQuery'
 import TaskCreateDialog from '@/components/tasks/TaskCreateDialog.vue'
 import TasksTable from '@/components/tasks/TasksTable.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskGenerationDialog from '@/components/tasks/TaskGenerationDialog.vue'
 import { listAccounts, type AccountItem } from '@/api/accounts'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -43,9 +45,16 @@ const selectedTask = ref<Task | null>(null)
 const criteriaTask = ref<Task | null>(null)
 const criteriaDescription = ref('')
 const isCriteriaSubmitting = ref(false)
+const isCriteriaProgressOpen = ref(false)
 const isDeleteDialogOpen = ref(false)
 const taskToDeleteId = ref<number | null>(null)
 const accountOptions = ref<AccountItem[]>([])
+const {
+  activeJob: criteriaGenerationJob,
+  pollingError: criteriaPollingError,
+  beginPolling: beginCriteriaPolling,
+  clearJob: clearCriteriaJob,
+} = useTaskGenerationJob()
 
 const taskToDelete = computed(() => {
   if (taskToDeleteId.value === null) return null
@@ -101,8 +110,12 @@ async function handleUpdateTask(data: TaskUpdate) {
   if (!selectedTask.value) return
   isEditSubmitting.value = true
   try {
-    await updateTask(selectedTask.value.id, data)
+    const result = await updateTask(selectedTask.value.id, data)
     isEditDialogOpen.value = false
+    if (result?.job) {
+      isCriteriaProgressOpen.value = true
+      beginCriteriaPolling(result.job)
+    }
   }
   catch (e) {
     toast({
@@ -117,6 +130,7 @@ async function handleUpdateTask(data: TaskUpdate) {
 }
 
 function handleOpenCriteriaDialog(task: Task) {
+  clearCriteriaJob()
   criteriaTask.value = task
   criteriaDescription.value = task.description || ''
   isCriteriaDialogOpen.value = true
@@ -135,8 +149,16 @@ async function handleRefreshCriteria() {
 
   isCriteriaSubmitting.value = true
   try {
-    await updateTask(criteriaTask.value.id, { description: criteriaDescription.value })
+    const result = await updateTask(
+      criteriaTask.value.id,
+      { description: criteriaDescription.value },
+      true,
+    )
     isCriteriaDialogOpen.value = false
+    if (result?.job) {
+      isCriteriaProgressOpen.value = true
+      beginCriteriaPolling(result.job)
+    }
   } catch (e) {
     toast({
       title: t('tasks.toasts.regenerateFailed'),
@@ -147,6 +169,36 @@ async function handleRefreshCriteria() {
     isCriteriaSubmitting.value = false
   }
 }
+
+watch(
+  () => criteriaGenerationJob.value?.status,
+  (status, previousStatus) => {
+    if (!status || status === previousStatus) return
+    if (status === 'completed') {
+      void fetchTasks()
+      toast({ title: t('tasks.toasts.regenerated') })
+      isCriteriaProgressOpen.value = false
+      clearCriteriaJob()
+      return
+    }
+    if (status === 'failed') {
+      toast({
+        title: t('tasks.toasts.regenerateFailed'),
+        description: criteriaGenerationJob.value?.error || criteriaGenerationJob.value?.message,
+        variant: 'destructive',
+      })
+    }
+  },
+)
+
+watch(criteriaPollingError, (value) => {
+  if (!value) return
+  toast({
+    title: t('tasks.toasts.progressFailed'),
+    description: value.message,
+    variant: 'destructive',
+  })
+})
 
 async function handleStartTask(taskId: number) {
   try {
@@ -276,6 +328,11 @@ onMounted(fetchAccountOptions)
       @stop-task="handleStopTask"
       @refresh-criteria="handleOpenCriteriaDialog"
       @toggle-enabled="handleToggleEnabled"
+    />
+
+    <TaskGenerationDialog
+      v-model:open="isCriteriaProgressOpen"
+      :job="criteriaGenerationJob"
     />
 
     <Dialog v-model:open="isDeleteDialogOpen">

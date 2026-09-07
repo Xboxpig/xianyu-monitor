@@ -30,13 +30,18 @@ class TaskGenerationService:
         self._lock = threading.Lock()
         self._workers: set[threading.Thread] = set()
 
-    async def create_job(self, task_name: str) -> TaskGenerationJob:
+    async def create_job(
+        self,
+        task_name: str,
+        step_specs: Optional[Iterable[tuple[str, str]]] = None,
+    ) -> TaskGenerationJob:
+        selected_steps = tuple(step_specs or self._step_specs)
         job = TaskGenerationJob(
             job_id=uuid4().hex,
             task_name=task_name,
             steps=[
                 TaskGenerationStep(key=key, label=label)
-                for key, label in self._step_specs
+                for key, label in selected_steps
             ],
         )
         with self._lock:
@@ -67,13 +72,21 @@ class TaskGenerationService:
             self._workers.add(thread)
         thread.start()
 
-    async def advance(self, job_id: str, step_key: str, message: str) -> TaskGenerationJob:
+    async def advance(
+        self,
+        job_id: str,
+        step_key: str,
+        message: str,
+        generated_characters: Optional[int] = None,
+    ) -> TaskGenerationJob:
         with self._lock:
             job = self._require_job(job_id)
             target_index = self._find_step_index(job, step_key)
             job.status = "running"
             job.current_step = step_key
             job.message = message
+            if generated_characters is not None:
+                job.generated_characters = max(0, int(generated_characters))
             for index, step in enumerate(job.steps):
                 if step.status == "failed":
                     continue

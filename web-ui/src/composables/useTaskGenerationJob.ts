@@ -2,7 +2,7 @@ import { computed, onScopeDispose, ref } from 'vue'
 import { getTaskGenerationJob } from '@/api/tasks'
 import type { TaskGenerationJob } from '@/types/task.d.ts'
 
-const POLL_INTERVAL_MS = 800
+const POLL_INTERVAL_MS = 1000
 
 function isTerminalStatus(status: TaskGenerationJob['status']) {
   return status === 'completed' || status === 'failed'

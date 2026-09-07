@@ -35,7 +35,7 @@ META_PROMPT_TEMPLATE = """
 4.  思考并生成针对新商品类型的“一票否决硬性原则”和“危险信号清单”。
 """
 
-ProgressCallback = Callable[[str, str], Awaitable[None]]
+ProgressCallback = Callable[[str, str, Optional[int]], Awaitable[None]]
 
 # 生成的分析标准完整性校验：参考范例约 1500+ 字符，且包含四个固定段落标记。
 # 历史经验：max_output_tokens 过小会导致输出在句子中间被截断，产生残缺标准。
@@ -67,9 +67,10 @@ async def _report_progress(
     progress_callback: Optional[ProgressCallback],
     step_key: str,
     message: str,
+    generated_characters: Optional[int] = None,
 ) -> None:
     if progress_callback:
-        await progress_callback(step_key, message)
+        await progress_callback(step_key, message, generated_characters)
 
 
 def _read_reference_text(reference_file_path: str) -> str:
@@ -143,34 +144,42 @@ async def generate_criteria(
             user_description=user_description,
         )
 
-        await _report_progress(progress_callback, "llm", "正在调用 AI 生成分析标准。")
+        await _report_progress(
+            progress_callback,
+            "llm",
+            "正在调用 AI 生成分析标准。",
+            0,
+        )
         last_problems: list = []
         for attempt in range(1, CRITERIA_GENERATION_ATTEMPTS + 1):
             generated_characters = 0
-            last_reported_characters = 0
             last_reported_at = time.monotonic()
 
             async def report_stream_delta(delta: str) -> None:
-                nonlocal generated_characters, last_reported_characters, last_reported_at
+                nonlocal generated_characters, last_reported_at
                 generated_characters += len(delta)
                 now = time.monotonic()
-                if (
-                    generated_characters - last_reported_characters < 256
-                    and now - last_reported_at < 1.0
-                ):
+                if now - last_reported_at < 1.0:
                     return
-                last_reported_characters = generated_characters
                 last_reported_at = now
                 await _report_progress(
                     progress_callback,
                     "llm",
                     f"正在接收 SSE 输出，已生成 {generated_characters} 字符。",
+                    generated_characters,
                 )
 
             generated_text = await _request_generated_text(
                 ai_client,
                 prompt,
                 on_text_delta=report_stream_delta,
+            )
+            generated_characters = len(generated_text)
+            await _report_progress(
+                progress_callback,
+                "llm",
+                f"AI 输出接收完成，共生成 {generated_characters} 字符。",
+                generated_characters,
             )
             last_problems = validate_generated_criteria(generated_text)
             if not last_problems:
@@ -185,6 +194,7 @@ async def generate_criteria(
                     "llm",
                     f"第 {attempt} 次生成不完整，正在重试（{attempt + 1}/"
                     f"{CRITERIA_GENERATION_ATTEMPTS}）...",
+                    0,
                 )
                 print("正在重新调用AI生成分析标准...")
         raise RuntimeError(

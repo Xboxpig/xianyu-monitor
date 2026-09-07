@@ -6,11 +6,21 @@ from typing import Optional
 
 import aiofiles
 
-from src.domain.models.task import TaskCreate, TaskGenerateRequest
+from src.domain.models.task import TaskCreate, TaskGenerateRequest, TaskUpdate
 from src.prompt_utils import extract_search_params, generate_criteria
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_service import TaskService
+
+
+CRITERIA_REGENERATION_STEPS: tuple[tuple[str, str], ...] = (
+    ("prepare", "接收更新请求"),
+    ("reference", "读取参考文件"),
+    ("prompt", "构建提示词"),
+    ("llm", "调用 AI 生成标准"),
+    ("persist", "保存分析标准"),
+    ("task", "更新任务记录"),
+)
 
 def build_criteria_filename(keyword: str) -> str:
     safe_keyword = "".join(
@@ -101,8 +111,14 @@ async def advance_job(
     job_id: str,
     step_key: str,
     message: str,
+    generated_characters: Optional[int] = None,
 ) -> None:
-    await generation_service.advance(job_id, step_key, message)
+    await generation_service.advance(
+        job_id,
+        step_key,
+        message,
+        generated_characters=generated_characters,
+    )
 
 
 async def run_ai_generation_job(
@@ -122,8 +138,18 @@ async def run_ai_generation_job(
             "已接收请求，开始准备分析标准。",
         )
 
-        async def report_progress(step_key: str, message: str) -> None:
-            await advance_job(generation_service, job_id, step_key, message)
+        async def report_progress(
+            step_key: str,
+            message: str,
+            generated_characters: Optional[int] = None,
+        ) -> None:
+            await advance_job(
+                generation_service,
+                job_id,
+                step_key,
+                message,
+                generated_characters,
+            )
 
         generated_criteria = await generate_criteria(
             user_description=req.description or "",
@@ -168,3 +194,67 @@ async def run_ai_generation_job(
         if os.path.exists(output_filename):
             os.remove(output_filename)
         await generation_service.fail(job_id, f"AI 任务生成失败: {exc}")
+
+
+async def run_criteria_regeneration_job(
+    *,
+    job_id: str,
+    task_id: int,
+    task_update: TaskUpdate,
+    description: str,
+    output_filename: str,
+    task_service: TaskService,
+    scheduler_service: SchedulerService,
+    generation_service: TaskGenerationService,
+) -> None:
+    """后台重新生成 criteria，并在成功后一次性保存任务更新。"""
+    try:
+        await advance_job(
+            generation_service,
+            job_id,
+            "prepare",
+            "已接收更新请求，开始准备分析标准。",
+        )
+
+        async def report_progress(
+            step_key: str,
+            message: str,
+            generated_characters: Optional[int] = None,
+        ) -> None:
+            await advance_job(
+                generation_service,
+                job_id,
+                step_key,
+                message,
+                generated_characters,
+            )
+
+        generated_criteria = await generate_criteria(
+            user_description=description,
+            reference_file_path="prompts/macbook_criteria.txt",
+            progress_callback=report_progress,
+        )
+        await advance_job(
+            generation_service,
+            job_id,
+            "persist",
+            f"正在保存分析标准到 {output_filename}。",
+        )
+        await save_generated_criteria(output_filename, generated_criteria)
+
+        await advance_job(
+            generation_service,
+            job_id,
+            "task",
+            "分析标准已生成，正在更新任务记录。",
+        )
+        task_update.ai_prompt_criteria_file = output_filename
+        task = await task_service.update_task(task_id, task_update)
+        await reload_scheduler(task_service, scheduler_service)
+        await generation_service.complete(
+            job_id,
+            task,
+            f"任务“{task.task_name}”的 AI 标准已更新。",
+        )
+    except Exception as exc:
+        await generation_service.fail(job_id, f"AI 标准重新生成失败: {exc}")

@@ -170,6 +170,46 @@ def test_generate_ai_task_returns_job_and_completes_async(api_client, api_contex
     assert api_context["scheduler_service"].reload_calls == 1
 
 
+def test_regenerate_criteria_returns_job_with_character_progress(
+    api_client,
+    api_context,
+    sample_task_payload,
+    monkeypatch,
+):
+    assert api_client.post("/api/tasks/", json=sample_task_payload).status_code == 200
+
+    async def fake_generate_criteria(*_args, **kwargs):
+        progress_callback = kwargs["progress_callback"]
+        await progress_callback("llm", "正在接收 SSE 输出，已生成 321 字符。", 321)
+        return "新的完整分析标准" * 80
+
+    monkeypatch.setattr(
+        "src.services.task_generation_runner.generate_criteria",
+        fake_generate_criteria,
+    )
+
+    response = api_client.patch(
+        "/api/tasks/0?regenerate_criteria=true",
+        json={"description": "更新后的详细需求"},
+    )
+    assert response.status_code == 202
+    job_id = response.json()["job"]["job_id"]
+
+    for _ in range(50):
+        latest_job = api_client.get(
+            f"/api/tasks/generate-jobs/{job_id}"
+        ).json()["job"]
+        if latest_job["status"] == "completed":
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("criteria 重新生成作业未在预期时间内完成")
+
+    assert latest_job["generated_characters"] == 321
+    assert latest_job["task"]["description"] == "更新后的详细需求"
+    assert api_context["scheduler_service"].reload_calls == 2
+
+
 def test_create_task_accepts_cron_alias(api_client, sample_task_payload):
     payload = dict(sample_task_payload)
     payload["cron"] = "@daily"

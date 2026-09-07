@@ -53,6 +53,21 @@ function resolveStepTextClass(step: TaskGenerationStep) {
       </Badge>
     </div>
 
+    <div
+      v-if="job.status === 'running' && job.current_step === 'llm'"
+      class="mt-4 flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-700"
+      role="status"
+      aria-live="polite"
+    >
+      <span class="flex items-center gap-2 text-sm font-medium">
+        <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-blue-500" />
+        {{ t('tasks.generation.receiving') }}
+      </span>
+      <span class="font-mono text-sm font-semibold tabular-nums">
+        {{ t('tasks.generation.generatedCharacters', { count: job.generated_characters }) }}
+      </span>
+    </div>
+
     <div class="mt-4 grid gap-3">
       <div
         v-for="step in job.steps"

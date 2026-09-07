@@ -29,6 +29,7 @@ class TaskGenerationJob(BaseModel):
     status: TaskGenerationStatus = "queued"
     message: str = "任务已排队，等待开始。"
     current_step: Optional[str] = None
+    generated_characters: int = 0
     steps: List[TaskGenerationStep] = Field(default_factory=list)
     task: Optional[Task] = None
     error: Optional[str] = None

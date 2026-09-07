@@ -60,6 +60,90 @@ def test_generate_criteria_closes_ai_client_after_success(monkeypatch, tmp_path)
     assert close_state["closed"] is True
 
 
+def test_generate_criteria_reports_final_character_count(monkeypatch, tmp_path):
+    reference_file = tmp_path / "reference.txt"
+    reference_file.write_text("reference", encoding="utf-8")
+    progress_events = []
+
+    class FakeAIClient:
+        def is_available(self):
+            return True
+
+        async def _call_ai(self, *_args, **kwargs):
+            await kwargs["on_text_delta"](VALID_CRITERIA)
+            return VALID_CRITERIA
+
+        async def close(self):
+            pass
+
+    async def report_progress(step_key, message, generated_characters):
+        progress_events.append((step_key, message, generated_characters))
+
+    monkeypatch.setattr(prompt_utils, "AIClient", FakeAIClient)
+
+    result = asyncio.run(
+        prompt_utils.generate_criteria(
+            "need a gpu",
+            str(reference_file),
+            progress_callback=report_progress,
+        )
+    )
+
+    assert result == VALID_CRITERIA
+    assert progress_events[-1] == (
+        "llm",
+        f"AI 输出接收完成，共生成 {len(VALID_CRITERIA)} 字符。",
+        len(VALID_CRITERIA),
+    )
+
+
+def test_generate_criteria_throttles_stream_progress_to_one_second(monkeypatch, tmp_path):
+    reference_file = tmp_path / "reference.txt"
+    reference_file.write_text("reference", encoding="utf-8")
+    progress_events = []
+    monotonic_values = iter((0.0, 0.4, 1.0, 1.4))
+
+    class FakeAIClient:
+        def is_available(self):
+            return True
+
+        async def _call_ai(self, *_args, **kwargs):
+            callback = kwargs["on_text_delta"]
+            await callback("a")
+            await callback("b")
+            await callback("c")
+            return VALID_CRITERIA
+
+        async def close(self):
+            pass
+
+    async def report_progress(step_key, message, generated_characters):
+        progress_events.append((step_key, message, generated_characters))
+
+    class FakeTime:
+        @staticmethod
+        def monotonic():
+            return next(monotonic_values)
+
+    monkeypatch.setattr(prompt_utils, "AIClient", FakeAIClient)
+    monkeypatch.setattr(prompt_utils, "time", FakeTime)
+
+    asyncio.run(
+        prompt_utils.generate_criteria(
+            "need a gpu",
+            str(reference_file),
+            progress_callback=report_progress,
+        )
+    )
+
+    streamed_counts = [
+        count
+        for step, message, count in progress_events
+        if step == "llm" and message.startswith("正在接收 SSE 输出")
+    ]
+    assert streamed_counts == [2]
+
+
 def test_generate_criteria_closes_ai_client_after_ai_failure(monkeypatch, tmp_path):
     close_state = {"closed": False}
     reference_file = tmp_path / "reference.txt"

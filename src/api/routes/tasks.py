@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import List
 import os
-import aiofiles
 from src.api.dependencies import (
     get_process_service,
     get_scheduler_service,
@@ -18,12 +17,14 @@ from src.services.ai_recovery_service import ai_recovery_service
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_generation_runner import (
+    CRITERIA_REGENERATION_STEPS,
     build_task_create,
+    build_criteria_filename,
     run_ai_generation_job,
+    run_criteria_regeneration_job,
 )
 from src.services.task_payloads import serialize_task, serialize_tasks
 from src.domain.models.task import TaskCreate, TaskUpdate, TaskGenerateRequest
-from src.prompt_utils import generate_criteria
 from src.utils import resolve_task_log_path
 from src.services.account_strategy_service import normalize_account_strategy
 from src.infrastructure.persistence.storage_names import build_result_filename
@@ -142,8 +143,10 @@ async def get_task_generation_job(
 async def update_task(
     task_id: int,
     task_update: TaskUpdate,
+    regenerate_criteria: bool = False,
     service: TaskService = Depends(get_task_service),
     scheduler_service: SchedulerService = Depends(get_scheduler_service),
+    generation_service: TaskGenerationService = Depends(get_task_generation_service),
 ):
     """更新任务"""
     try:
@@ -168,45 +171,41 @@ async def update_task(
             )
             if not _has_keyword_rules(final_rules):
                 raise HTTPException(status_code=400, detail="关键词模式下至少需要一个关键词。")
-        if target_mode == "ai" and (description_changed or switched_to_ai):
-            print(f"检测到任务 {task_id} 需要刷新 AI 标准文件，开始重新生成...")
-            try:
-                description_for_ai = (
-                    task_update.description
-                    if task_update.description is not None
-                    else existing_task.description
+        needs_criteria_generation = target_mode == "ai" and (
+            description_changed or switched_to_ai or regenerate_criteria
+        )
+        if needs_criteria_generation:
+            description_for_ai = (
+                task_update.description
+                if task_update.description is not None
+                else existing_task.description
+            )
+            if not str(description_for_ai or "").strip():
+                raise HTTPException(status_code=400, detail="AI 模式下详细需求不能为空。")
+            output_filename = build_criteria_filename(existing_task.keyword)
+            job = await generation_service.create_job(
+                existing_task.task_name,
+                CRITERIA_REGENERATION_STEPS,
+            )
+            generation_service.track(
+                run_criteria_regeneration_job(
+                    job_id=job.job_id,
+                    task_id=task_id,
+                    task_update=task_update,
+                    description=str(description_for_ai),
+                    output_filename=output_filename,
+                    task_service=service,
+                    scheduler_service=scheduler_service,
+                    generation_service=generation_service,
                 )
-                if not str(description_for_ai or "").strip():
-                    raise HTTPException(status_code=400, detail="AI 模式下详细需求不能为空。")
-                safe_keyword = "".join(
-                    c for c in existing_task.keyword.lower().replace(' ', '_')
-                    if c.isalnum() or c in "_-"
-                ).rstrip()
-                output_filename = f"prompts/{safe_keyword}_criteria.txt"
-                print(f"目标文件路径: {output_filename}")
-                print("开始调用 AI 生成新的分析标准...")
-                generated_criteria = await generate_criteria(
-                    user_description=description_for_ai,
-                    reference_file_path="prompts/macbook_criteria.txt"
-                )
-                if not generated_criteria or len(generated_criteria.strip()) == 0:
-                    print("AI 返回的内容为空")
-                    raise HTTPException(status_code=500, detail="AI 未能生成分析标准，返回内容为空。")
-                print(f"保存新的分析标准到: {output_filename}")
-                os.makedirs("prompts", exist_ok=True)
-                async with aiofiles.open(output_filename, 'w', encoding='utf-8') as f:
-                    await f.write(generated_criteria)
-                print(f"新的分析标准已保存")
-                task_update.ai_prompt_criteria_file = output_filename
-                print(f"已更新 ai_prompt_criteria_file 字段为: {output_filename}")
-            except HTTPException:
-                raise
-            except Exception as e:
-                error_msg = f"重新生成 criteria 文件时出错: {str(e)}"
-                print(error_msg)
-                import traceback
-                print(traceback.format_exc())
-                raise HTTPException(status_code=500, detail=error_msg)
+            )
+            return JSONResponse(
+                status_code=202,
+                content={
+                    "message": "AI 标准重新生成已开始。",
+                    "job": job.model_dump(mode="json"),
+                },
+            )
         task = await service.update_task(task_id, task_update)
         await _reload_scheduler_if_needed(service, scheduler_service)
         return {"message": "任务更新成功", "task": serialize_task(task, scheduler_service)}

@@ -4,8 +4,10 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import type { Task, TaskUpdate } from '@/types/task.d.ts'
 import { useTasks } from '@/composables/useTasks'
+import { useTaskGenerationJob } from '@/composables/useTaskGenerationJob'
 import { useResults } from '@/composables/useResults'
 import TaskListPane from '@/components/monitor/TaskListPane.vue'
+import TaskGenerationDialog from '@/components/tasks/TaskGenerationDialog.vue'
 import ResultsFilterBar from '@/components/results/ResultsFilterBar.vue'
 import ResultsInsightsPanel from '@/components/results/ResultsInsightsPanel.vue'
 import ResultsGrid from '@/components/results/ResultsGrid.vue'
@@ -59,6 +61,13 @@ const activeTaskId = ref<number | null>(null)
 const isDeleteDialogOpen = ref(false)
 const isBlacklistDialogOpen = ref(false)
 const blacklistDraft = ref('')
+const isCriteriaProgressOpen = ref(false)
+const {
+  activeJob: criteriaGenerationJob,
+  pollingError: criteriaPollingError,
+  beginPolling: beginCriteriaPolling,
+  clearJob: clearCriteriaJob,
+} = useTaskGenerationJob()
 
 function normalizeKeyword(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '_')
@@ -126,9 +135,19 @@ async function handleStopTask(taskId: number) {
   }
 }
 
-async function handleUpdateTask(taskId: number, data: TaskUpdate) {
+async function handleUpdateTask(
+  taskId: number,
+  data: TaskUpdate,
+  regenerateCriteria = false,
+) {
   try {
-    await updateTask(taskId, data)
+    clearCriteriaJob()
+    const result = await updateTask(taskId, data, regenerateCriteria)
+    if (result?.job) {
+      isCriteriaProgressOpen.value = true
+      beginCriteriaPolling(result.job)
+      return
+    }
     await fetchTasks({ silent: true })
   } catch (e) {
     toast({
@@ -138,6 +157,36 @@ async function handleUpdateTask(taskId: number, data: TaskUpdate) {
     })
   }
 }
+
+watch(
+  () => criteriaGenerationJob.value?.status,
+  (status, previousStatus) => {
+    if (!status || status === previousStatus) return
+    if (status === 'completed') {
+      void fetchTasks({ silent: true })
+      toast({ title: t('tasks.toasts.regenerated') })
+      isCriteriaProgressOpen.value = false
+      clearCriteriaJob()
+      return
+    }
+    if (status === 'failed') {
+      toast({
+        title: t('tasks.toasts.regenerateFailed'),
+        description: criteriaGenerationJob.value?.error || criteriaGenerationJob.value?.message,
+        variant: 'destructive',
+      })
+    }
+  },
+)
+
+watch(criteriaPollingError, (value) => {
+  if (!value) return
+  toast({
+    title: t('tasks.toasts.progressFailed'),
+    description: value.message,
+    variant: 'destructive',
+  })
+})
 
 async function handleDeleteTask(taskId: number) {
   try {
@@ -235,6 +284,11 @@ const deleteConfirmText = computed(() => {
         @created="fetchTasks()"
       />
     </div>
+
+    <TaskGenerationDialog
+      v-model:open="isCriteriaProgressOpen"
+      :job="criteriaGenerationJob"
+    />
 
     <!-- 右侧结果区 -->
     <div class="flex min-w-0 flex-1 flex-col">

@@ -43,12 +43,19 @@ export interface TaskGenerationJob {
   status: TaskGenerationStatus;
   message: string;
   current_step: string | null;
+  generated_characters: number;
   steps: TaskGenerationStep[];
   task: Task | null;
   error: string | null;
 }
 
 export interface TaskCreateResponse {
+  message: string;
+  task?: Task;
+  job?: TaskGenerationJob;
+}
+
+export interface TaskUpdateResponse {
   message: string;
   task?: Task;
   job?: TaskGenerationJob;

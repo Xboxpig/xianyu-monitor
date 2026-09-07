@@ -32,7 +32,7 @@ const emit = defineEmits<{
   (e: 'run-task', taskId: number): void
   (e: 'stop-task', taskId: number): void
   (e: 'delete-task', taskId: number): void
-  (e: 'update-task', taskId: number, data: TaskUpdate): void
+  (e: 'update-task', taskId: number, data: TaskUpdate, regenerateCriteria?: boolean): void
   (e: 'created'): void
 }>()
 
@@ -123,7 +123,7 @@ function handleRefreshCriteria() {
     })
     return
   }
-  emit('update-task', criteriaTask.value.id, { description: criteriaDescription.value })
+  emit('update-task', criteriaTask.value.id, { description: criteriaDescription.value }, true)
   isCriteriaDialogOpen.value = false
 }
 
