@@ -242,6 +242,12 @@ const zhCN = {
     dialogDescription: '此操作不可恢复，确定要清空当前任务日志吗？',
     confirmClear: '确认清空',
     trimmedNotice: '...日志过长已截断，仅保留最新内容...',
+    aiIdle: '补分析失败、异常或未分析商品',
+    aiRunning: '停止当前 AI 分析与重试',
+    aiStarted: 'AI 补分析已启动',
+    aiNothingToRetry: '当前任务没有需要补分析的商品',
+    aiCancelled: '已停止当前 AI 分析与重试',
+    aiActionFailed: 'AI 分析操作失败',
   },
   settings: {
     title: '系统设置',

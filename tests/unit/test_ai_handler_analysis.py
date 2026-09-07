@@ -6,6 +6,7 @@ import pytest
 import src.ai_handler as ai_handler
 import src.config as app_config
 from src.infrastructure.external.ai_client import AIClient as RealAIClient
+from src.services.ai_request_compat import AIStreamingError
 
 
 def _build_fake_client(responses_create_impl, chat_create_impl=None):
@@ -94,6 +95,50 @@ def test_get_ai_analysis_returns_parsed_json(monkeypatch, tmp_path):
 
     assert result["is_recommended"] is True
     assert call_count["value"] == 1
+
+
+def test_get_ai_analysis_retries_response_failed_with_capped_backoff(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.chdir(tmp_path)
+    call_count = {"value": 0}
+    delays = []
+
+    class RetryingAIClient:
+        def is_available(self):
+            return True
+
+        async def _call_ai(self, *_args, **_kwargs):
+            call_count["value"] += 1
+            if call_count["value"] < ai_handler.DEFAULT_AI_ANALYSIS_MAX_RETRIES:
+                raise AIStreamingError("Responses SSE event: response.failed")
+            return (
+                '{"prompt_version":"v1","is_recommended":true,'
+                '"reason":"ok","risk_tags":[],'
+                '"criteria_analysis":{"seller_type":"个人"}}'
+            )
+
+        async def close(self):
+            return None
+
+    async def record_sleep(seconds):
+        delays.append(seconds)
+
+    monkeypatch.setattr(ai_handler, "AIClient", RetryingAIClient)
+    monkeypatch.setattr(ai_handler.asyncio, "sleep", record_sleep)
+
+    result = asyncio.run(
+        ai_handler.get_ai_analysis(
+            {"商品信息": {"商品ID": "retry", "商品标题": "重试测试"}},
+            image_paths=[],
+            prompt_text="请输出 JSON",
+        )
+    )
+
+    assert result["reason"] == "ok"
+    assert call_count["value"] == 10
+    assert delays == [1, 2, 4, 8, 16, 32, 32, 32, 32]
 
 
 def test_get_ai_analysis_retries_without_structured_output_when_model_rejects_it(

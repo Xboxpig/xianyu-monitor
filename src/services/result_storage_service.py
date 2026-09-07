@@ -195,6 +195,97 @@ def _save_result_record_sync(record: dict, keyword: str) -> bool:
     return True
 
 
+def _needs_ai_recovery(record: dict) -> bool:
+    analysis = record.get("ai_analysis")
+    if not isinstance(analysis, dict) or not analysis:
+        return True
+    if analysis.get("analysis_source") == "keyword":
+        return False
+    if analysis.get("error"):
+        return True
+    if analysis.get("analysis_source") != "ai":
+        return True
+    if not isinstance(analysis.get("is_recommended"), bool):
+        return True
+    return not isinstance(analysis.get("reason"), str) or not analysis.get("reason", "").strip()
+
+
+async def load_ai_recovery_records(task_name: str) -> list[dict]:
+    return await asyncio.to_thread(_load_ai_recovery_records_sync, task_name)
+
+
+def _load_ai_recovery_records_sync(task_name: str) -> list[dict]:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, keyword, raw_json
+            FROM result_items
+            WHERE task_name = ?
+            ORDER BY id ASC
+            """,
+            (task_name,),
+        ).fetchall()
+
+    records: list[dict] = []
+    for row in rows:
+        try:
+            record = json.loads(str(row["raw_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if _needs_ai_recovery(record):
+            records.append(
+                {
+                    "row_id": int(row["id"]),
+                    "keyword": str(row["keyword"]),
+                    "record": record,
+                }
+            )
+    return records
+
+
+async def update_result_ai_analysis(row_id: int, analysis: dict) -> bool:
+    return await asyncio.to_thread(
+        _update_result_ai_analysis_sync,
+        row_id,
+        analysis,
+    )
+
+
+def _update_result_ai_analysis_sync(row_id: int, analysis: dict) -> bool:
+    bootstrap_sqlite_storage()
+    with sqlite_connection() as conn:
+        row = conn.execute(
+            "SELECT raw_json FROM result_items WHERE id = ?",
+            (int(row_id),),
+        ).fetchone()
+        if row is None:
+            return False
+        record = json.loads(str(row["raw_json"]))
+        record["ai_analysis"] = dict(analysis)
+        keyword_hit_count = analysis.get("keyword_hit_count", 0)
+        try:
+            keyword_hit_count = int(keyword_hit_count)
+        except (TypeError, ValueError):
+            keyword_hit_count = 0
+        cursor = conn.execute(
+            """
+            UPDATE result_items
+            SET is_recommended = ?, analysis_source = ?, keyword_hit_count = ?, raw_json = ?
+            WHERE id = ?
+            """,
+            (
+                1 if analysis.get("is_recommended") else 0,
+                analysis.get("analysis_source", "ai"),
+                keyword_hit_count,
+                json.dumps(record, ensure_ascii=False),
+                int(row_id),
+            ),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
 def load_processed_link_keys(keyword: str) -> set[str]:
     bootstrap_sqlite_storage()
     filename = build_result_filename(keyword)

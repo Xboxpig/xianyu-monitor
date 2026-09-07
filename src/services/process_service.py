@@ -101,6 +101,7 @@ class ProcessService:
 
     async def _spawn_process(
         self,
+        task_id: int,
         task_name: str,
         log_file_handle: TextIO,
     ) -> asyncio.subprocess.Process:
@@ -108,6 +109,7 @@ class ProcessService:
         child_env = os.environ.copy()
         child_env["PYTHONIOENCODING"] = "utf-8"
         child_env["PYTHONUTF8"] = "1"
+        child_env["XIANYU_TASK_ID"] = str(task_id)
         return await asyncio.create_subprocess_exec(
             *self._build_spawn_command(task_name),
             stdout=log_file_handle,
@@ -149,7 +151,7 @@ class ProcessService:
         log_file_handle = None
         try:
             log_file_path, log_file_handle = self._open_log_file(task_id, task_name)
-            process = await self._spawn_process(task_name, log_file_handle)
+            process = await self._spawn_process(task_id, task_name, log_file_handle)
         except Exception as exc:
             self._close_log_handle(log_file_handle)
             print(f"启动任务 '{task_name}' 失败: {exc}")

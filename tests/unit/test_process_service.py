@@ -109,3 +109,25 @@ def test_process_service_adds_debug_limit_arg_when_env_enabled(monkeypatch):
         "--debug-limit",
         "1",
     ]
+
+
+def test_process_service_passes_task_id_to_child_environment(monkeypatch, tmp_path):
+    captured = {}
+
+    async def run_scenario():
+        service = ProcessService()
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            captured["args"] = args
+            captured["env"] = kwargs["env"]
+            return FakeProcess(pid=4322)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+        log_path = tmp_path / "task.log"
+        with log_path.open("a", encoding="utf-8") as log_handle:
+            process = await service._spawn_process(7, "task-a", log_handle)
+        process.finish()
+
+    asyncio.run(run_scenario())
+
+    assert captured["env"]["XIANYU_TASK_ID"] == "7"

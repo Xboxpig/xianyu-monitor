@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Bot, Play, Square } from 'lucide-vue-next'
 import { useLogs } from '@/composables/useLogs'
 import { useTasks } from '@/composables/useTasks'
+import {
+  cancelAiAnalysis,
+  getAiAnalysisStatus,
+  retryFailedAiAnalysis,
+  type AiAnalysisStatus,
+} from '@/api/tasks'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
@@ -21,6 +28,28 @@ const selectedTaskId = ref('')
 const isPrepending = ref(false)
 const lastScrollTop = ref(0)
 const lastScrollHeight = ref(0)
+const aiStatus = ref<AiAnalysisStatus>({ active: false, active_count: 0, mode: null })
+const isAiActionPending = ref(false)
+let aiStatusInterval: number | null = null
+
+const selectedTask = computed(() => (
+  tasks.value.find((task) => String(task.id) === selectedTaskId.value) || null
+))
+const isAiRunning = computed(() => aiStatus.value.active)
+const aiProgress = computed(() => {
+  const progress = aiStatus.value.progress
+  const total = Number(progress?.total || 0)
+  if (aiStatus.value.mode === 'recovery' && total > 0) {
+    return Math.min(100, ((Number(progress?.completed || 0) + Number(progress?.failed || 0)) / total) * 100)
+  }
+  const attempt = Number(aiStatus.value.attempt || 1)
+  const maxAttempts = Number(aiStatus.value.max_attempts || 10)
+  return Math.min(100, Math.max(8, (attempt / maxAttempts) * 100))
+})
+const aiRingOffset = computed(() => 207.35 * (1 - aiProgress.value / 100))
+const aiActionTitle = computed(() => (
+  isAiRunning.value ? t('logs.aiRunning') : t('logs.aiIdle')
+))
 
 // Auto-scroll logic
 watch(logs, async () => {
@@ -63,7 +92,57 @@ watch(selectedTaskId, (taskId) => {
   setTaskId(resolvedTaskId)
   if (resolvedTaskId) {
     loadLatest(50)
+    refreshAiStatus()
+  } else {
+    aiStatus.value = { active: false, active_count: 0, mode: null }
   }
+})
+
+async function refreshAiStatus() {
+  const taskId = Number(selectedTaskId.value)
+  if (!taskId) return
+  try {
+    aiStatus.value = await getAiAnalysisStatus(taskId)
+  } catch {
+    // The log poll already surfaces connectivity problems; keep this control quiet.
+  }
+}
+
+async function handleAiAction() {
+  const taskId = Number(selectedTaskId.value)
+  if (!taskId || isAiActionPending.value) return
+  isAiActionPending.value = true
+  try {
+    if (isAiRunning.value) {
+      aiStatus.value = await cancelAiAnalysis(taskId)
+      toast({ title: t('logs.aiCancelled') })
+    } else {
+      const status = await retryFailedAiAnalysis(taskId)
+      aiStatus.value = status
+      if (Number(status.progress?.total || 0) > 0) {
+        toast({ title: t('logs.aiStarted') })
+      } else {
+        toast({ title: t('logs.aiNothingToRetry') })
+      }
+    }
+  } catch (e) {
+    toast({
+      title: t('logs.aiActionFailed'),
+      description: (e as Error).message,
+      variant: 'destructive',
+    })
+  } finally {
+    isAiActionPending.value = false
+    await refreshAiStatus()
+  }
+}
+
+onMounted(() => {
+  aiStatusInterval = window.setInterval(refreshAiStatus, 1000)
+})
+
+onUnmounted(() => {
+  if (aiStatusInterval !== null) window.clearInterval(aiStatusInterval)
 })
 
 function scrollToBottom() {
@@ -154,6 +233,43 @@ async function handleClearLogs() {
         >{{ logs }}</pre>
       </CardContent>
     </Card>
+
+    <Teleport to="body">
+      <button
+        type="button"
+        class="group fixed bottom-6 right-6 z-40 grid h-[72px] w-[72px] shrink-0 place-items-center rounded-full bg-slate-800 text-blue-300 shadow-lg ring-1 ring-blue-950/70 transition hover:bg-blue-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-40 sm:right-[72px]"
+        :class="isAiRunning ? 'bg-blue-600 text-white' : ''"
+        :title="aiActionTitle"
+        :aria-label="aiActionTitle"
+        :disabled="!selectedTaskId || selectedTask?.decision_mode !== 'ai' || isAiActionPending"
+        @click="handleAiAction"
+      >
+        <svg
+          v-if="isAiRunning"
+          class="pointer-events-none absolute inset-0 h-[72px] w-[72px] -rotate-90 animate-spin text-blue-300 [animation-duration:1.6s]"
+          viewBox="0 0 72 72"
+          aria-hidden="true"
+        >
+          <circle cx="36" cy="36" r="33" fill="none" stroke="currentColor" stroke-opacity="0.2" stroke-width="4" />
+          <circle
+            cx="36"
+            cy="36"
+            r="33"
+            fill="none"
+            stroke="currentColor"
+            stroke-linecap="round"
+            stroke-width="4"
+            :stroke-dasharray="207.35"
+            :stroke-dashoffset="aiRingOffset"
+          />
+        </svg>
+        <Square v-if="isAiRunning" class="h-6 w-6 fill-current" />
+        <template v-else>
+          <Bot class="h-7 w-7 group-hover:hidden" />
+          <Play class="hidden h-7 w-7 fill-current group-hover:block" />
+        </template>
+      </button>
+    </Teleport>
 
     <Dialog v-model:open="isClearDialogOpen">
       <DialogContent class="sm:max-w-[420px]">

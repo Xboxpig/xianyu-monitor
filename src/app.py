@@ -28,6 +28,7 @@ from src.services.process_service import ProcessService
 from src.services.scheduler_service import SchedulerService
 from src.services.task_log_cleanup_service import cleanup_task_logs
 from src.services.task_generation_service import TaskGenerationService
+from src.services.ai_recovery_service import ai_recovery_service
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.config.settings import settings as app_settings
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
 
     # 关闭时
     print("正在关闭应用...")
+    await ai_recovery_service.stop_all()
     scheduler_service.stop()
     await process_service.stop_all()
     print("应用已关闭")

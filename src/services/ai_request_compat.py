@@ -260,9 +260,11 @@ def _consume_stream_event(
         if event_type == "response.completed":
             return "", _field(event, "response") or completed_response
         if event_type in {"error", "response.failed", "response.incomplete"}:
+            response_error = _field(_field(event, "response"), "error")
             message = (
                 _field(event, "message")
                 or _field(_field(event, "error"), "message")
+                or _field(response_error, "message")
                 or f"Responses SSE event: {event_type}"
             )
             raise AIStreamingError(str(message))

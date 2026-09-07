@@ -14,6 +14,7 @@ from src.api.dependencies import (
 )
 from src.services.task_service import TaskService
 from src.services.process_service import ProcessService
+from src.services.ai_recovery_service import ai_recovery_service
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
 from src.services.task_generation_runner import (
@@ -279,3 +280,39 @@ async def stop_task(
         raise HTTPException(status_code=404, detail="任务未找到")
     await process_service.stop_task(task_id)
     return {"message": f"任务ID {task_id} 已发送停止信号"}
+
+
+@router.get("/{task_id}/ai-analysis/status", response_model=dict)
+async def get_task_ai_analysis_status(
+    task_id: int,
+    task_service: TaskService = Depends(get_task_service),
+):
+    task = await task_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务未找到")
+    return ai_recovery_service.status(task_id)
+
+
+@router.post("/{task_id}/ai-analysis/retry", response_model=dict)
+async def retry_failed_task_ai_analysis(
+    task_id: int,
+    task_service: TaskService = Depends(get_task_service),
+):
+    task = await task_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务未找到")
+    try:
+        return await ai_recovery_service.start(task_id, task)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{task_id}/ai-analysis/cancel", response_model=dict)
+async def cancel_task_ai_analysis(
+    task_id: int,
+    task_service: TaskService = Depends(get_task_service),
+):
+    task = await task_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务未找到")
+    return await ai_recovery_service.cancel(task_id, task.task_name)

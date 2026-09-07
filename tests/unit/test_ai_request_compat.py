@@ -61,6 +61,20 @@ def test_collect_responses_sse_raises_terminal_error_event():
         asyncio.run(collect_ai_stream_async(stream, RESPONSES_API_MODE))
 
 
+def test_collect_responses_sse_uses_nested_response_failed_message():
+    stream = _AsyncEvents(
+        [
+            {
+                "type": "response.failed",
+                "response": {"error": {"message": "upstream overloaded"}},
+            }
+        ]
+    )
+
+    with pytest.raises(AIStreamingError, match="upstream overloaded"):
+        asyncio.run(collect_ai_stream_async(stream, RESPONSES_API_MODE))
+
+
 def test_collect_chat_completions_sse_delta_chunks():
     stream = [
         {"choices": [{"delta": {"content": "你"}}]},

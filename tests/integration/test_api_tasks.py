@@ -1,6 +1,8 @@
 import asyncio
 import time
 
+from src.api.routes import tasks as tasks_routes
+
 
 def test_create_list_update_delete_task(api_client, api_context, sample_task_payload):
     response = api_client.post("/api/tasks/", json=sample_task_payload)
@@ -54,6 +56,38 @@ def test_start_stop_task_updates_status(api_client, api_context, sample_task_pay
     process_service = api_context["process_service"]
     assert process_service.started == [(0, sample_task_payload["task_name"])]
     assert process_service.stopped == [0]
+
+
+def test_task_ai_analysis_control_endpoints(
+    api_client,
+    sample_task_payload,
+    monkeypatch,
+):
+    response = api_client.post("/api/tasks/", json=sample_task_payload)
+    assert response.status_code == 200
+
+    idle = {"active": False, "active_count": 0, "mode": None, "progress": {}}
+    running = {
+        "active": True,
+        "active_count": 1,
+        "mode": "recovery",
+        "progress": {"total": 2, "completed": 0, "failed": 0},
+    }
+
+    monkeypatch.setattr(tasks_routes.ai_recovery_service, "status", lambda _task_id: idle)
+
+    async def fake_start(_task_id, _task):
+        return running
+
+    async def fake_cancel(_task_id, _task_name):
+        return idle
+
+    monkeypatch.setattr(tasks_routes.ai_recovery_service, "start", fake_start)
+    monkeypatch.setattr(tasks_routes.ai_recovery_service, "cancel", fake_cancel)
+
+    assert api_client.get("/api/tasks/0/ai-analysis/status").json() == idle
+    assert api_client.post("/api/tasks/0/ai-analysis/retry").json() == running
+    assert api_client.post("/api/tasks/0/ai-analysis/cancel").json() == idle
 
 
 def test_generate_keyword_mode_task_without_ai_criteria(api_client):

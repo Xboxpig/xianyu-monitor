@@ -35,6 +35,10 @@ from src.services.ai_response_parser import (
     EmptyAIResponseError,
     parse_ai_response_json,
 )
+from src.services.ai_retry_control import (
+    AIAnalysisRetryCancelled,
+    AIAnalysisRetryControl,
+)
 from src.services.notification_service import build_notification_service
 from src.infrastructure.external.ai_client import AIClient
 from src.utils import convert_goofish_link, retry_on_failure
@@ -51,6 +55,35 @@ DEFAULT_IMAGE_DOWNLOAD_CONCURRENCY = max(
     1,
     _positive_int(os.getenv("IMAGE_DOWNLOAD_CONCURRENCY", "3"), 3),
 )
+
+DEFAULT_AI_ANALYSIS_MAX_RETRIES = 10
+AI_ANALYSIS_RETRY_MAX_DELAY_SECONDS = 32
+
+
+def _analysis_retry_delay_seconds(failed_attempt: int) -> int:
+    """Return 1, 2, 4, 8, 16, 32, 32... for zero-based attempts."""
+    return min(2 ** max(0, failed_attempt), AI_ANALYSIS_RETRY_MAX_DELAY_SECONDS)
+
+
+async def _wait_before_analysis_retry(
+    attempt: int,
+    max_retries: int,
+    retry_control: AIAnalysisRetryControl | None = None,
+) -> None:
+    delay = _analysis_retry_delay_seconds(attempt)
+    safe_print(
+        f"   [AI分析] 准备第{attempt + 2}次重试，{delay}秒后继续... "
+        f"(最多{max_retries}次)"
+    )
+    if retry_control is None:
+        await asyncio.sleep(delay)
+        return
+    retry_control.update(
+        phase="backoff",
+        attempt=attempt + 1,
+        next_delay_seconds=delay,
+    )
+    await retry_control.wait(delay)
 
 
 def safe_print(text):
@@ -289,7 +322,12 @@ async def send_ntfy_notification(product_data, reason):
     return results
 
 
-async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
+async def get_ai_analysis(
+    product_data,
+    image_paths=None,
+    prompt_text="",
+    task_id: int | None = None,
+):
     """将完整的商品JSON数据和所有图片发送给 AI 进行分析（异步）。"""
     item_info = product_data.get('商品信息', {})
     product_id = item_info.get('商品ID', 'N/A')
@@ -354,10 +392,31 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
     except Exception as e:
         safe_print(f"   [日志] 保存AI分析日志时出错: {e}")
 
-    # 增强的AI调用，包含更严格的结构化输出控制和重试机制
-    max_retries = 4
+    retry_control = AIAnalysisRetryControl.from_runtime(
+        product_id=str(product_id),
+        max_attempts=DEFAULT_AI_ANALYSIS_MAX_RETRIES,
+        task_id=task_id,
+    )
+    try:
+        return await _run_ai_analysis_attempts(messages, retry_control)
+    finally:
+        retry_control.close()
+
+
+async def _run_ai_analysis_attempts(
+    messages: list[dict],
+    retry_control: AIAnalysisRetryControl,
+):
+    """Run validated AI analysis attempts with task-scoped cancellation."""
+    max_retries = DEFAULT_AI_ANALYSIS_MAX_RETRIES
     for attempt in range(max_retries):
         try:
+            retry_control.update(
+                phase="request",
+                attempt=attempt + 1,
+                next_delay_seconds=None,
+            )
+            retry_control.raise_if_cancelled()
             # 根据重试次数调整参数
             current_temperature = 0.1 if attempt == 0 else 0.05  # 重试时使用更低的温度
 
@@ -365,11 +424,13 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
             if not ai_client.is_available():
                 raise RuntimeError("AI 客户端未初始化")
             try:
-                ai_response_content = await ai_client._call_ai(
-                    messages,
-                    temperature=current_temperature,
-                    max_output_tokens=4000,
-                    enable_json_output=ENABLE_RESPONSE_FORMAT,
+                ai_response_content = await retry_control.run(
+                    ai_client._call_ai(
+                        messages,
+                        temperature=current_temperature,
+                        max_output_tokens=4000,
+                        enable_json_output=ENABLE_RESPONSE_FORMAT,
+                    )
                 )
                 if AI_DEBUG_MODE:
                     safe_print(
@@ -398,19 +459,31 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
                     return parsed_response
                 safe_print(f"   [AI分析] 第{attempt + 1}次尝试格式验证失败")
                 if attempt < max_retries - 1:
-                    safe_print(f"   [AI分析] 准备第{attempt + 2}次重试...")
+                    await _wait_before_analysis_retry(
+                        attempt,
+                        max_retries,
+                        retry_control,
+                    )
                     continue
                 raise ValueError("AI响应格式缺少必需字段或字段类型不正确。")
             except json.JSONDecodeError as e:
                 safe_print(f"   [AI分析] 第{attempt + 1}次尝试JSON解析失败: {e}")
                 if attempt < max_retries - 1:
-                    safe_print(f"   [AI分析] 准备第{attempt + 2}次重试...")
+                    await _wait_before_analysis_retry(
+                        attempt,
+                        max_retries,
+                        retry_control,
+                    )
                     continue
                 raise e
             except EmptyAIResponseError as e:
                 safe_print(f"   [AI分析] 第{attempt + 1}次尝试返回空响应: {e}")
                 if attempt < max_retries - 1:
-                    safe_print(f"   [AI分析] 准备第{attempt + 2}次重试...")
+                    await _wait_before_analysis_retry(
+                        attempt,
+                        max_retries,
+                        retry_control,
+                    )
                     continue
                 raise e
 
@@ -421,10 +494,13 @@ async def get_ai_analysis(product_data, image_paths=None, prompt_text=""):
                 safe_print(traceback.format_exc())
                 safe_print("-------------------------------------\n")
             safe_print(f"   [AI分析] 第{attempt + 1}次尝试AI调用失败: {e}")
-            if isinstance(e, EmptyAIResponseError):
+            if isinstance(e, (EmptyAIResponseError, AIAnalysisRetryCancelled)):
                 raise
             if attempt < max_retries - 1:
-                safe_print(f"   [AI分析] 准备第{attempt + 2}次重试...")
+                await _wait_before_analysis_retry(
+                    attempt,
+                    max_retries,
+                    retry_control,
+                )
                 continue
-            else:
-                raise e
+            raise e

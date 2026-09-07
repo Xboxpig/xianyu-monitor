@@ -242,6 +242,12 @@ const enUS = {
     dialogDescription: 'This action cannot be undone. Clear the current task log?',
     confirmClear: 'Clear',
     trimmedNotice: '...log output was truncated to keep only the newest content...',
+    aiIdle: 'Analyze failed, invalid, or missing AI results',
+    aiRunning: 'Stop the current AI analysis and retries',
+    aiStarted: 'AI recovery analysis started.',
+    aiNothingToRetry: 'This task has no items that need AI recovery.',
+    aiCancelled: 'Current AI analysis and retries stopped.',
+    aiActionFailed: 'AI analysis action failed.',
   },
   settings: {
     title: 'Settings',

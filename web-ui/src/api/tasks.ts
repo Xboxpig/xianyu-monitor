@@ -7,6 +7,22 @@ import type {
 } from '@/types/task.d.ts'
 import { http } from '@/lib/http'
 
+export interface AiAnalysisStatus {
+  active: boolean
+  active_count: number
+  mode: 'live' | 'recovery' | null
+  phase?: 'request' | 'backoff' | null
+  attempt?: number | null
+  max_attempts?: number | null
+  next_delay_seconds?: number | null
+  progress?: {
+    total?: number
+    completed?: number
+    failed?: number
+    cancelled?: boolean
+  }
+}
+
 export async function getAllTasks(): Promise<Task[]> {
   return await http('/api/tasks')
 }
@@ -43,6 +59,18 @@ export async function startTask(taskId: number): Promise<void> {
 
 export async function stopTask(taskId: number): Promise<void> {
   await http(`/api/tasks/stop/${taskId}`, { method: 'POST' })
+}
+
+export async function getAiAnalysisStatus(taskId: number): Promise<AiAnalysisStatus> {
+  return await http(`/api/tasks/${taskId}/ai-analysis/status`)
+}
+
+export async function retryFailedAiAnalysis(taskId: number): Promise<AiAnalysisStatus> {
+  return await http(`/api/tasks/${taskId}/ai-analysis/retry`, { method: 'POST' })
+}
+
+export async function cancelAiAnalysis(taskId: number): Promise<AiAnalysisStatus> {
+  return await http(`/api/tasks/${taskId}/ai-analysis/cancel`, { method: 'POST' })
 }
 
 export async function deleteTask(taskId: number): Promise<void> {
