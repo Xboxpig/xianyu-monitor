@@ -39,6 +39,15 @@ from src.services.ai_retry_control import (
     AIAnalysisRetryCancelled,
     AIAnalysisRetryControl,
 )
+from src.services.ai_retry_policy import (
+    AI_RETRY_MAX_DELAY_SECONDS,
+    DEFAULT_AI_RETRY_ATTEMPTS,
+    ai_retry_delay_seconds,
+)
+from src.services.llm_request_queue import (
+    LLM_PRIORITY_NORMAL,
+    global_llm_request_queue,
+)
 from src.services.notification_service import build_notification_service
 from src.infrastructure.external.ai_client import AIClient
 from src.utils import convert_goofish_link, retry_on_failure
@@ -56,34 +65,44 @@ DEFAULT_IMAGE_DOWNLOAD_CONCURRENCY = max(
     _positive_int(os.getenv("IMAGE_DOWNLOAD_CONCURRENCY", "3"), 3),
 )
 
-DEFAULT_AI_ANALYSIS_MAX_RETRIES = 10
-AI_ANALYSIS_RETRY_MAX_DELAY_SECONDS = 32
+DEFAULT_AI_ANALYSIS_MAX_RETRIES = DEFAULT_AI_RETRY_ATTEMPTS
+AI_ANALYSIS_RETRY_MAX_DELAY_SECONDS = AI_RETRY_MAX_DELAY_SECONDS
 
 
 def _analysis_retry_delay_seconds(failed_attempt: int) -> int:
     """Return 1, 2, 4, 8, 16, 32, 32... for zero-based attempts."""
-    return min(2 ** max(0, failed_attempt), AI_ANALYSIS_RETRY_MAX_DELAY_SECONDS)
+    return ai_retry_delay_seconds(failed_attempt)
 
 
 async def _wait_before_analysis_retry(
     attempt: int,
     max_retries: int,
     retry_control: AIAnalysisRetryControl | None = None,
+    queue_summary: str = "",
+    error_reason: str = "",
 ) -> None:
     delay = _analysis_retry_delay_seconds(attempt)
     safe_print(
         f"   [AI分析] 准备第{attempt + 2}次重试，{delay}秒后继续... "
         f"(最多{max_retries}次)"
     )
-    if retry_control is None:
-        await asyncio.sleep(delay)
-        return
-    retry_control.update(
-        phase="backoff",
-        attempt=attempt + 1,
-        next_delay_seconds=delay,
-    )
-    await retry_control.wait(delay)
+    async with global_llm_request_queue.retrying(
+        priority=LLM_PRIORITY_NORMAL,
+        label="analysis",
+        summary=queue_summary,
+        retry_attempt=attempt + 2,
+        retry_max_attempts=max_retries,
+        retry_error=error_reason,
+    ):
+        if retry_control is None:
+            await asyncio.sleep(delay)
+            return
+        retry_control.update(
+            phase="backoff",
+            attempt=attempt + 1,
+            next_delay_seconds=delay,
+        )
+        await retry_control.wait(delay)
 
 
 def safe_print(text):
@@ -331,6 +350,11 @@ async def get_ai_analysis(
     """将完整的商品JSON数据和所有图片发送给 AI 进行分析（异步）。"""
     item_info = product_data.get('商品信息', {})
     product_id = item_info.get('商品ID', 'N/A')
+    product_title = str(item_info.get('商品标题', '无') or '无')
+    task_name = str(
+        product_data.get("任务名称") or product_data.get("任务名") or "未知任务"
+    )
+    queue_summary = f"{task_name} - {product_title}"
 
     safe_print(f"\n   [AI分析] 开始分析商品 #{product_id} (含 {len(image_paths or [])} 张图片)...")
     safe_print(f"   [AI分析] 标题: {item_info.get('商品标题', '无')}")
@@ -398,7 +422,11 @@ async def get_ai_analysis(
         task_id=task_id,
     )
     try:
-        return await _run_ai_analysis_attempts(messages, retry_control)
+        return await _run_ai_analysis_attempts(
+            messages,
+            retry_control,
+            queue_summary=queue_summary,
+        )
     finally:
         retry_control.close()
 
@@ -406,9 +434,11 @@ async def get_ai_analysis(
 async def _run_ai_analysis_attempts(
     messages: list[dict],
     retry_control: AIAnalysisRetryControl,
+    queue_summary: str = "",
 ):
     """Run validated AI analysis attempts with task-scoped cancellation."""
     max_retries = DEFAULT_AI_ANALYSIS_MAX_RETRIES
+    previous_error = ""
     for attempt in range(max_retries):
         try:
             retry_control.update(
@@ -430,6 +460,11 @@ async def _run_ai_analysis_attempts(
                         temperature=current_temperature,
                         max_output_tokens=4000,
                         enable_json_output=ENABLE_RESPONSE_FORMAT,
+                        request_label="analysis",
+                        request_summary=queue_summary,
+                        retry_attempt=attempt + 1 if attempt > 0 else None,
+                        retry_max_attempts=max_retries if attempt > 0 else None,
+                        retry_error=previous_error,
                     )
                 )
                 if AI_DEBUG_MODE:
@@ -459,30 +494,39 @@ async def _run_ai_analysis_attempts(
                     return parsed_response
                 safe_print(f"   [AI分析] 第{attempt + 1}次尝试格式验证失败")
                 if attempt < max_retries - 1:
+                    previous_error = "AI响应格式缺少必需字段或字段类型不正确。"
                     await _wait_before_analysis_retry(
                         attempt,
                         max_retries,
                         retry_control,
+                        queue_summary,
+                        previous_error,
                     )
                     continue
                 raise ValueError("AI响应格式缺少必需字段或字段类型不正确。")
             except json.JSONDecodeError as e:
                 safe_print(f"   [AI分析] 第{attempt + 1}次尝试JSON解析失败: {e}")
                 if attempt < max_retries - 1:
+                    previous_error = str(e)
                     await _wait_before_analysis_retry(
                         attempt,
                         max_retries,
                         retry_control,
+                        queue_summary,
+                        previous_error,
                     )
                     continue
                 raise e
             except EmptyAIResponseError as e:
                 safe_print(f"   [AI分析] 第{attempt + 1}次尝试返回空响应: {e}")
                 if attempt < max_retries - 1:
+                    previous_error = str(e)
                     await _wait_before_analysis_retry(
                         attempt,
                         max_retries,
                         retry_control,
+                        queue_summary,
+                        previous_error,
                     )
                     continue
                 raise e
@@ -497,10 +541,13 @@ async def _run_ai_analysis_attempts(
             if isinstance(e, (EmptyAIResponseError, AIAnalysisRetryCancelled)):
                 raise
             if attempt < max_retries - 1:
+                previous_error = str(e)
                 await _wait_before_analysis_retry(
                     attempt,
                     max_retries,
                     retry_control,
+                    queue_summary,
+                    previous_error,
                 )
                 continue
             raise e

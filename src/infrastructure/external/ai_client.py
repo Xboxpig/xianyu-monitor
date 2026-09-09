@@ -2,10 +2,13 @@
 AI 客户端封装
 提供统一的 AI 调用接口
 """
+import asyncio
 import ipaddress
+import inspect
 import os
 import json
 import base64
+import time
 from typing import Awaitable, Callable, Dict, List, Optional
 from datetime import datetime
 from dotenv import load_dotenv
@@ -47,6 +50,10 @@ from src.services.ai_response_parser import (
     EmptyAIResponseError,
     extract_ai_response_content,
     parse_ai_response_json,
+)
+from src.services.llm_request_queue import (
+    LLM_PRIORITY_NORMAL,
+    global_llm_request_queue,
 )
 
 
@@ -251,6 +258,81 @@ class AIClient:
         )
 
     async def _call_ai(
+        self,
+        messages: List[Dict],
+        *,
+        temperature: float = 0.1,
+        max_output_tokens: int = 4000,
+        enable_json_output: Optional[bool] = None,
+        on_text_delta: Optional[Callable[[str], Awaitable[None] | None]] = None,
+        request_priority: int = LLM_PRIORITY_NORMAL,
+        request_label: str = "llm",
+        request_summary: str = "",
+        retry_attempt: int | None = None,
+        retry_max_attempts: int | None = None,
+        retry_error: str = "",
+        request_task_id: int | None = None,
+        request_generation_job_id: str = "",
+        request_generation_mode: str = "",
+        request_timeout_seconds: float | None = None,
+    ) -> str:
+        """Queue one logical LLM call before contacting an upstream endpoint."""
+        async with global_llm_request_queue.slot(
+            priority=request_priority,
+            label=request_label,
+            summary=request_summary,
+            retry_attempt=retry_attempt,
+            retry_max_attempts=retry_max_attempts,
+            retry_error=retry_error,
+            task_id=request_task_id,
+            generation_job_id=request_generation_job_id,
+            generation_mode=request_generation_mode,
+        ) as queue_lease:
+            streamed_parts: list[str] = []
+            last_queue_update_at = 0.0
+
+            async def update_queue_content(content: str) -> None:
+                try:
+                    await queue_lease.update_content(content)
+                except Exception as exc:
+                    print(f"[LLM队列] 更新流式内容失败: {exc}")
+
+            async def report_text_delta(delta: str) -> None:
+                nonlocal last_queue_update_at
+                streamed_parts.append(delta)
+                now = time.monotonic()
+                if now - last_queue_update_at >= 1.0:
+                    last_queue_update_at = now
+                    await update_queue_content("".join(streamed_parts))
+                if on_text_delta is not None:
+                    callback_result = on_text_delta(delta)
+                    if inspect.isawaitable(callback_result):
+                        await callback_result
+
+            request = self._call_ai_without_queue(
+                messages,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                enable_json_output=enable_json_output,
+                on_text_delta=report_text_delta,
+            )
+            if request_timeout_seconds is None:
+                response_text = await request
+            else:
+                timeout_seconds = max(0.1, float(request_timeout_seconds))
+                try:
+                    async with asyncio.timeout(timeout_seconds):
+                        response_text = await request
+                except TimeoutError as exc:
+                    raise TimeoutError(
+                        f"上游 LLM 请求超过 {timeout_seconds:g} 秒仍未完成。"
+                    ) from exc
+            await update_queue_content(
+                "".join(streamed_parts) or response_text
+            )
+            return response_text
+
+    async def _call_ai_without_queue(
         self,
         messages: List[Dict],
         *,

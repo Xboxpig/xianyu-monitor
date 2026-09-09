@@ -64,6 +64,44 @@ def _clear_settings_env(monkeypatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def test_ai_queue_endpoint_returns_observable_snapshot(monkeypatch):
+    expected = {
+        "concurrency": 10,
+        "active_count": 1,
+        "retrying_count": 0,
+        "waiting_count": 1,
+        "items": [
+            {
+                "ticket_id": "criteria-1",
+                "kind": "criteria",
+                "status": "running",
+                "summary": "ps5-bxl",
+                "stream_content": "正在生成标准",
+                "created_at": 1.0,
+                "started_at": 2.0,
+                "waiting_position": None,
+                "estimated_wait_seconds": None,
+                "retry_attempt": None,
+                "retry_max_attempts": None,
+                "retry_error": "",
+            }
+        ],
+    }
+
+    async def fake_snapshot():
+        return expected
+
+    monkeypatch.setattr(
+        settings.global_llm_request_queue,
+        "snapshot",
+        fake_snapshot,
+    )
+    response = _build_settings_client().get("/api/settings/ai/queue")
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_rotation_settings_include_account_rotation_fields(tmp_path, monkeypatch):
     _clear_settings_env(monkeypatch)
     env_file = tmp_path / ".env"

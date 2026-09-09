@@ -3,6 +3,7 @@ import asyncio
 import pytest
 
 import src.prompt_utils as prompt_utils
+from src.services.ai_request_compat import AIStreamingError
 from src.services.ai_response_parser import EmptyAIResponseError
 
 # 一段结构完整、长度达标（>=400字符）的分析标准
@@ -34,6 +35,7 @@ def test_validate_generated_criteria_rejects_truncated():
 
 def test_generate_criteria_closes_ai_client_after_success(monkeypatch, tmp_path):
     close_state = {"closed": False}
+    request_kwargs = {}
     reference_file = tmp_path / "reference.txt"
     reference_file.write_text("reference", encoding="utf-8")
 
@@ -44,7 +46,8 @@ def test_generate_criteria_closes_ai_client_after_success(monkeypatch, tmp_path)
         def refresh(self):
             raise AssertionError("refresh should not be called")
 
-        async def _call_ai(self, *_args, **_kwargs):
+        async def _call_ai(self, *_args, **kwargs):
+            request_kwargs.update(kwargs)
             return VALID_CRITERIA
 
         async def close(self):
@@ -53,11 +56,22 @@ def test_generate_criteria_closes_ai_client_after_success(monkeypatch, tmp_path)
     monkeypatch.setattr(prompt_utils, "AIClient", FakeAIClient)
 
     result = asyncio.run(
-        prompt_utils.generate_criteria("need a gpu", str(reference_file))
+        prompt_utils.generate_criteria(
+            "need a gpu",
+            str(reference_file),
+            queue_task_id=12,
+            queue_generation_job_id="job-abc",
+            queue_generation_mode="regenerate",
+        )
     )
 
     assert result == VALID_CRITERIA
     assert close_state["closed"] is True
+    assert request_kwargs["request_priority"] == prompt_utils.LLM_PRIORITY_CRITERIA
+    assert request_kwargs["request_label"] == "criteria"
+    assert request_kwargs["request_task_id"] == 12
+    assert request_kwargs["request_generation_job_id"] == "job-abc"
+    assert request_kwargs["request_generation_mode"] == "regenerate"
 
 
 def test_generate_criteria_reports_final_character_count(monkeypatch, tmp_path):
@@ -146,6 +160,8 @@ def test_generate_criteria_throttles_stream_progress_to_one_second(monkeypatch, 
 
 def test_generate_criteria_closes_ai_client_after_ai_failure(monkeypatch, tmp_path):
     close_state = {"closed": False}
+    calls = {"count": 0}
+    delays = []
     reference_file = tmp_path / "reference.txt"
     reference_file.write_text("reference", encoding="utf-8")
 
@@ -157,6 +173,7 @@ def test_generate_criteria_closes_ai_client_after_ai_failure(monkeypatch, tmp_pa
             raise AssertionError("refresh should not be called")
 
         async def _call_ai(self, *_args, **_kwargs):
+            calls["count"] += 1
             raise EmptyAIResponseError("AI响应内容为空。")
 
         async def close(self):
@@ -164,10 +181,67 @@ def test_generate_criteria_closes_ai_client_after_ai_failure(monkeypatch, tmp_pa
 
     monkeypatch.setattr(prompt_utils, "AIClient", FakeAIClient)
 
+    async def record_sleep(seconds):
+        delays.append(seconds)
+
+    monkeypatch.setattr(prompt_utils.asyncio, "sleep", record_sleep)
+
     with pytest.raises(EmptyAIResponseError, match="AI响应内容为空"):
         asyncio.run(prompt_utils.generate_criteria("need a gpu", str(reference_file)))
 
     assert close_state["closed"] is True
+    assert calls["count"] == 10
+    assert delays == [1, 2, 4, 8, 16, 32, 32, 32, 32]
+
+
+def test_generate_criteria_retries_upstream_errors_with_capped_backoff(
+    monkeypatch,
+    tmp_path,
+):
+    reference_file = tmp_path / "reference.txt"
+    reference_file.write_text("reference", encoding="utf-8")
+    calls = {"count": 0}
+    delays = []
+    progress_events = []
+
+    class FakeAIClient:
+        def is_available(self):
+            return True
+
+        async def _call_ai(self, *_args, **_kwargs):
+            calls["count"] += 1
+            if calls["count"] < prompt_utils.CRITERIA_API_MAX_ATTEMPTS:
+                raise AIStreamingError(
+                    "Responses SSE event: response.failed: "
+                    "Our servers are currently overloaded."
+                )
+            return VALID_CRITERIA
+
+        async def close(self):
+            pass
+
+    async def record_sleep(seconds):
+        delays.append(seconds)
+
+    async def report_progress(step_key, message, generated_characters):
+        progress_events.append((step_key, message, generated_characters))
+
+    monkeypatch.setattr(prompt_utils, "AIClient", FakeAIClient)
+    monkeypatch.setattr(prompt_utils.asyncio, "sleep", record_sleep)
+
+    result = asyncio.run(
+        prompt_utils.generate_criteria(
+            "need a gpu",
+            str(reference_file),
+            progress_callback=report_progress,
+        )
+    )
+
+    assert result == VALID_CRITERIA
+    assert calls["count"] == 10
+    assert delays == [1, 2, 4, 8, 16, 32, 32, 32, 32]
+    assert any("第 9 次调用失败" in message for _, message, _ in progress_events)
+    assert any("response.failed" in message for _, message, _ in progress_events)
 
 
 def test_generate_criteria_retries_until_complete(monkeypatch, tmp_path):
@@ -236,11 +310,14 @@ def test_parse_search_params_json_recovers_from_prose():
 
 
 def test_extract_search_params_parses_ai_json(monkeypatch):
+    request_kwargs = {}
+
     class FakeAIClient:
         def is_available(self):
             return True
 
-        async def _call_ai(self, *_args, **_kwargs):
+        async def _call_ai(self, *_args, **kwargs):
+            request_kwargs.update(kwargs)
             return (
                 '{"min_price": 1000, "max_price": null, '
                 '"exclude_keywords": ["二手", "矿卡"]}'
@@ -255,6 +332,7 @@ def test_extract_search_params_parses_ai_json(monkeypatch):
     assert params["min_price"] == 1000
     assert params["max_price"] is None
     assert params["exclude_keywords"] == ["二手", "矿卡"]
+    assert request_kwargs["request_timeout_seconds"] == 60.0
 
 
 def test_extract_search_params_returns_defaults_on_ai_failure(monkeypatch):

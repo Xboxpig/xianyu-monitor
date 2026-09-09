@@ -507,6 +507,25 @@ def test_close_closes_underlying_async_client_and_clears_reference():
     assert client.client is None
 
 
+def test_call_ai_applies_timeout_after_queue_slot_is_acquired():
+    client = AIClient.__new__(AIClient)
+
+    async def slow_request(*_args, **_kwargs):
+        await asyncio.sleep(1)
+        return "late"
+
+    client._call_ai_without_queue = slow_request
+
+    with pytest.raises(TimeoutError, match="超过 0.1 秒"):
+        asyncio.run(
+            client._call_ai(
+                [{"role": "user", "content": "extract"}],
+                request_label="search-params",
+                request_timeout_seconds=0.1,
+            )
+        )
+
+
 def test_parse_response_uses_first_json_object_when_response_contains_multiple_objects():
     client = AIClient.__new__(AIClient)
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -8,6 +9,14 @@ from typing import Awaitable, Callable, Optional
 import aiofiles
 
 from src.infrastructure.external.ai_client import AIClient
+from src.services.ai_retry_policy import (
+    DEFAULT_AI_RETRY_ATTEMPTS,
+    ai_retry_delay_seconds,
+)
+from src.services.llm_request_queue import (
+    LLM_PRIORITY_CRITERIA,
+    global_llm_request_queue,
+)
 
 # The meta-prompt to instruct the AI
 META_PROMPT_TEMPLATE = """
@@ -47,6 +56,7 @@ REQUIRED_CRITERIA_MARKERS = (
     ("危险信号", "危险信号清单"),
 )
 CRITERIA_GENERATION_ATTEMPTS = 3
+CRITERIA_API_MAX_ATTEMPTS = DEFAULT_AI_RETRY_ATTEMPTS
 
 
 def validate_generated_criteria(text: str) -> list:
@@ -87,6 +97,13 @@ async def _request_generated_text(
     ai_client: AIClient,
     prompt: str,
     on_text_delta: Optional[Callable[[str], Awaitable[None] | None]] = None,
+    queue_summary: str = "",
+    retry_attempt: int | None = None,
+    retry_max_attempts: int | None = None,
+    retry_error: str = "",
+    queue_task_id: int | None = None,
+    queue_generation_job_id: str = "",
+    queue_generation_mode: str = "",
 ) -> str:
     print("正在调用AI生成新的分析标准，请稍候...")
     try:
@@ -96,6 +113,15 @@ async def _request_generated_text(
             max_output_tokens=4000,
             enable_json_output=False,
             on_text_delta=on_text_delta,
+            request_priority=LLM_PRIORITY_CRITERIA,
+            request_label="criteria",
+            request_summary=queue_summary,
+            retry_attempt=retry_attempt,
+            retry_max_attempts=retry_max_attempts,
+            retry_error=retry_error,
+            request_task_id=queue_task_id,
+            request_generation_job_id=queue_generation_job_id,
+            request_generation_mode=queue_generation_mode,
         )
     except Exception as exc:
         print(f"调用 OpenAI API 时出错: {exc}")
@@ -103,6 +129,102 @@ async def _request_generated_text(
 
     print("AI已成功生成内容。")
     return generated_text.strip()
+
+
+async def _request_generated_text_with_retry(
+    ai_client: AIClient,
+    prompt: str,
+    progress_callback: Optional[ProgressCallback] = None,
+    queue_summary: str = "",
+    queue_task_id: int | None = None,
+    queue_generation_job_id: str = "",
+    queue_generation_mode: str = "",
+) -> str:
+    """Generate criteria while applying the shared upstream retry policy."""
+    previous_error = ""
+    for request_attempt in range(CRITERIA_API_MAX_ATTEMPTS):
+        generated_characters = 0
+        last_reported_at = time.monotonic()
+
+        async def report_stream_delta(delta: str) -> None:
+            nonlocal generated_characters, last_reported_at
+            generated_characters += len(delta)
+            now = time.monotonic()
+            if now - last_reported_at < 1.0:
+                return
+            last_reported_at = now
+            await _report_progress(
+                progress_callback,
+                "llm",
+                f"正在接收 SSE 输出（第 {request_attempt + 1}/"
+                f"{CRITERIA_API_MAX_ATTEMPTS} 次），已生成 "
+                f"{generated_characters} 字符。",
+                generated_characters,
+            )
+
+        await _report_progress(
+            progress_callback,
+            "llm",
+            f"正在调用 AI 生成分析标准（第 {request_attempt + 1}/"
+            f"{CRITERIA_API_MAX_ATTEMPTS} 次）。",
+            0,
+        )
+        try:
+            generated_text = await _request_generated_text(
+                ai_client,
+                prompt,
+                on_text_delta=report_stream_delta,
+                queue_summary=queue_summary,
+                retry_attempt=(request_attempt + 1 if request_attempt > 0 else None),
+                retry_max_attempts=(
+                    CRITERIA_API_MAX_ATTEMPTS if request_attempt > 0 else None
+                ),
+                retry_error=previous_error,
+                queue_task_id=queue_task_id,
+                queue_generation_job_id=queue_generation_job_id,
+                queue_generation_mode=queue_generation_mode,
+            )
+        except Exception as exc:
+            if request_attempt >= CRITERIA_API_MAX_ATTEMPTS - 1:
+                raise
+            delay = ai_retry_delay_seconds(request_attempt)
+            message = (
+                f"第 {request_attempt + 1} 次调用失败: {exc}；"
+                f"{delay} 秒后重试（{request_attempt + 2}/"
+                f"{CRITERIA_API_MAX_ATTEMPTS}）。"
+            )
+            print(f"AI 标准生成上游请求失败，{message}")
+            await _report_progress(
+                progress_callback,
+                "llm",
+                message,
+                generated_characters,
+            )
+            previous_error = str(exc)
+            async with global_llm_request_queue.retrying(
+                priority=LLM_PRIORITY_CRITERIA,
+                label="criteria",
+                summary=queue_summary,
+                retry_attempt=request_attempt + 2,
+                retry_max_attempts=CRITERIA_API_MAX_ATTEMPTS,
+                retry_error=previous_error,
+                task_id=queue_task_id,
+                generation_job_id=queue_generation_job_id,
+                generation_mode=queue_generation_mode,
+            ):
+                await asyncio.sleep(delay)
+            continue
+
+        generated_characters = len(generated_text)
+        await _report_progress(
+            progress_callback,
+            "llm",
+            f"AI 输出接收完成，共生成 {generated_characters} 字符。",
+            generated_characters,
+        )
+        return generated_text
+
+    raise RuntimeError("AI 标准生成重试已耗尽。")
 
 
 async def _close_ai_client(
@@ -121,6 +243,10 @@ async def generate_criteria(
     user_description: str,
     reference_file_path: str,
     progress_callback: Optional[ProgressCallback] = None,
+    queue_summary: str = "",
+    queue_task_id: int | None = None,
+    queue_generation_job_id: str = "",
+    queue_generation_mode: str = "",
 ) -> str:
     """
     Generates a new criteria file content using AI.
@@ -152,34 +278,14 @@ async def generate_criteria(
         )
         last_problems: list = []
         for attempt in range(1, CRITERIA_GENERATION_ATTEMPTS + 1):
-            generated_characters = 0
-            last_reported_at = time.monotonic()
-
-            async def report_stream_delta(delta: str) -> None:
-                nonlocal generated_characters, last_reported_at
-                generated_characters += len(delta)
-                now = time.monotonic()
-                if now - last_reported_at < 1.0:
-                    return
-                last_reported_at = now
-                await _report_progress(
-                    progress_callback,
-                    "llm",
-                    f"正在接收 SSE 输出，已生成 {generated_characters} 字符。",
-                    generated_characters,
-                )
-
-            generated_text = await _request_generated_text(
+            generated_text = await _request_generated_text_with_retry(
                 ai_client,
                 prompt,
-                on_text_delta=report_stream_delta,
-            )
-            generated_characters = len(generated_text)
-            await _report_progress(
                 progress_callback,
-                "llm",
-                f"AI 输出接收完成，共生成 {generated_characters} 字符。",
-                generated_characters,
+                queue_summary,
+                queue_task_id,
+                queue_generation_job_id,
+                queue_generation_mode,
             )
             last_problems = validate_generated_criteria(generated_text)
             if not last_problems:
@@ -247,6 +353,11 @@ def _parse_search_params_json(text: str) -> dict:
 async def extract_search_params(
     user_description: str,
     ai_client: Optional[AIClient] = None,
+    *,
+    queue_summary: str = "任务搜索参数提取",
+    queue_generation_job_id: str = "",
+    queue_generation_mode: str = "",
+    request_timeout_seconds: float = 60.0,
 ) -> dict:
     """从购买需求中提取结构化搜索参数（价格区间/排除词）。
 
@@ -273,6 +384,11 @@ async def extract_search_params(
             temperature=0.2,
             max_output_tokens=1000,
             enable_json_output=True,
+            request_label="search-params",
+            request_summary=queue_summary,
+            request_generation_job_id=queue_generation_job_id,
+            request_generation_mode=queue_generation_mode,
+            request_timeout_seconds=request_timeout_seconds,
         )
         data = _parse_search_params_json(raw)
         for key in ("min_price", "max_price"):

@@ -34,6 +34,7 @@ from src.services.notification_config_service import (
     prepare_notification_settings_update,
 )
 from src.services.notification_service import build_notification_service
+from src.services.llm_request_queue import global_llm_request_queue
 from src.services.process_service import ProcessService
 
 
@@ -283,6 +284,11 @@ async def get_ai_settings():
         "SKIP_AI_ANALYSIS": env_manager.get_value("SKIP_AI_ANALYSIS", "false").lower() == "true",
         "PROXY_URL": env_manager.get_value("PROXY_URL", ""),
     }
+
+
+@router.get("/ai/queue")
+async def get_ai_request_queue():
+    return await global_llm_request_queue.snapshot()
 
 
 @router.put("/ai")
