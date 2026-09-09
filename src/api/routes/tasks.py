@@ -12,7 +12,7 @@ from src.api.dependencies import (
     get_task_service,
 )
 from src.services.task_service import TaskService
-from src.services.process_service import ProcessService
+from src.services.process_service import ProcessService, TaskStartError
 from src.services.ai_recovery_service import ai_recovery_service
 from src.services.scheduler_service import SchedulerService
 from src.services.task_generation_service import TaskGenerationService
@@ -31,6 +31,24 @@ from src.infrastructure.persistence.storage_names import build_result_filename
 from src.services.price_history_service import delete_price_snapshots
 from src.services.result_storage_service import delete_result_file_records
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+
+
+def _task_start_error_response(
+    *,
+    status_code: int,
+    code: str,
+    message: str,
+    context: dict | None = None,
+) -> JSONResponse:
+    """Return both a UI-readable detail and a stable machine-readable code."""
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "detail": f"错误代码：{code}\n{message}",
+            "code": code,
+            "context": context or {},
+        },
+    )
 
 async def _reload_scheduler_if_needed(
     task_service: TaskService,
@@ -269,14 +287,46 @@ async def start_task(
     """启动单个任务"""
     task = await task_service.get_task(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="任务未找到")
+        return _task_start_error_response(
+            status_code=404,
+            code="TASK_NOT_FOUND",
+            message=f"未找到 ID 为 {task_id} 的任务。",
+            context={"task_id": task_id},
+        )
     if not task.enabled:
-        raise HTTPException(status_code=400, detail="任务已被禁用，无法启动")
+        return _task_start_error_response(
+            status_code=409,
+            code="TASK_DISABLED",
+            message=f"任务“{task.task_name}”已被禁用，无法启动。",
+            context={"task_id": task_id, "task_name": task.task_name},
+        )
     if task.is_running:
-        raise HTTPException(status_code=400, detail="任务已在运行中")
-    success = await process_service.start_task(task_id, task.task_name)
+        return _task_start_error_response(
+            status_code=409,
+            code="TASK_ALREADY_RUNNING",
+            message=f"任务“{task.task_name}”已在运行中。",
+            context={"task_id": task_id, "task_name": task.task_name},
+        )
+    try:
+        success = await process_service.start_task(
+            task_id,
+            task.task_name,
+            raise_on_failure=True,
+        )
+    except TaskStartError as exc:
+        return _task_start_error_response(
+            status_code=exc.status_code,
+            code=exc.code,
+            message=exc.message,
+            context=exc.context,
+        )
     if not success:
-        raise HTTPException(status_code=500, detail="启动任务失败")
+        return _task_start_error_response(
+            status_code=500,
+            code="TASK_PROCESS_START_FAILED",
+            message=f"任务“{task.task_name}”的爬虫进程未能启动，后端未返回更多信息。",
+            context={"task_id": task_id, "task_name": task.task_name},
+        )
     return {"message": f"任务 '{task.task_name}' 已启动"}
 @router.post("/stop/{task_id}", response_model=dict)
 async def stop_task(

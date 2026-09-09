@@ -1,8 +1,11 @@
 import asyncio
 import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from src.services.process_service import ProcessService
+import pytest
+
+from src.services.process_service import ProcessService, TaskStartError
 
 
 class FakeProcess:
@@ -131,3 +134,60 @@ def test_process_service_passes_task_id_to_child_environment(monkeypatch, tmp_pa
     asyncio.run(run_scenario())
 
     assert captured["env"]["XIANYU_TASK_ID"] == "7"
+
+
+def test_process_service_surfaces_failure_guard_details_for_manual_start(monkeypatch):
+    async def run_scenario():
+        service = ProcessService()
+        service.failure_guard.threshold = 3
+        service.failure_guard.should_skip_start = lambda *args, **kwargs: SimpleNamespace(
+            skip=True,
+            should_notify=False,
+            reason='TimeoutError: waiting for locator("text=新发布")',
+            consecutive_failures=3,
+            paused_until=datetime(2026, 9, 10, 15, 16, 57, tzinfo=timezone.utc),
+        )
+
+        async def ignore_notification(*_args, **_kwargs):
+            return None
+
+        monkeypatch.setattr(service, "_notify_skip", ignore_notification)
+
+        with pytest.raises(TaskStartError) as captured:
+            await service.start_task(3, "NAS", raise_on_failure=True)
+
+        error = captured.value
+        assert error.code == "TASK_PAUSED_BY_FAILURE_GUARD"
+        assert error.status_code == 409
+        assert error.context["consecutive_failures"] == 3
+        assert error.context["failure_threshold"] == 3
+        assert error.context["last_error"].startswith("TimeoutError")
+
+    asyncio.run(run_scenario())
+
+
+def test_process_service_surfaces_spawn_exception_for_manual_start(monkeypatch):
+    async def run_scenario():
+        service = ProcessService()
+        service.failure_guard.should_skip_start = lambda *args, **kwargs: SimpleNamespace(
+            skip=False,
+            should_notify=False,
+            reason="",
+            consecutive_failures=0,
+            paused_until=None,
+        )
+
+        def fail_to_open_log(*_args, **_kwargs):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(service, "_open_log_file", fail_to_open_log)
+
+        with pytest.raises(TaskStartError) as captured:
+            await service.start_task(3, "NAS", raise_on_failure=True)
+
+        error = captured.value
+        assert error.code == "TASK_PROCESS_START_FAILED"
+        assert error.status_code == 500
+        assert error.context["reason"] == "OSError: permission denied"
+
+    asyncio.run(run_scenario())

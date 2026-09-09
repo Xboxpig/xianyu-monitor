@@ -66,7 +66,13 @@ class FakeProcessService:
         self._on_started = on_started
         self._on_stopped = on_stopped
 
-    async def start_task(self, task_id: int, task_name: str) -> bool:
+    async def start_task(
+        self,
+        task_id: int,
+        task_name: str,
+        *,
+        raise_on_failure: bool = False,
+    ) -> bool:
         self.started.append((task_id, task_name))
         if self._on_started:
             await self._on_started(task_id)

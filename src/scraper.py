@@ -115,6 +115,63 @@ def _format_failure_reason(reason: str, limit: int = 500) -> str:
     return cleaned[: limit - 3] + "..."
 
 
+def _classify_playwright_timeout(error: BaseException, stage: str) -> tuple[str, str]:
+    """Return a stable error code and category for common scraper timeouts."""
+    detail = str(error)
+    lowered = detail.lower()
+    if "baxia-dialog-mask" in lowered or "j_middleware_frame_widget" in lowered:
+        return "RISK_CONTROL_OVERLAY_BLOCKED", "risk_control"
+    if 'locator("text=新发布")' in detail or "text=新发布" in detail:
+        return "SEARCH_FILTER_SELECTOR_TIMEOUT", "page_readiness"
+    if 'waiting for event "response"' in lowered:
+        if stage == "search_initial_response":
+            return "SEARCH_RESPONSE_TIMEOUT", "network_response"
+        if stage == "filter_application":
+            return "FILTER_RESPONSE_TIMEOUT", "network_response"
+        if stage == "detail_processing":
+            return "DETAIL_RESPONSE_TIMEOUT", "network_response"
+        return "API_RESPONSE_TIMEOUT", "network_response"
+    if "page.goto" in lowered or "navigation" in lowered:
+        return "PAGE_NAVIGATION_TIMEOUT", "navigation"
+    return "PLAYWRIGHT_OPERATION_TIMEOUT", "playwright_timeout"
+
+
+def _log_classified_timeout(
+    error: BaseException,
+    *,
+    stage: str,
+    task_name: str,
+    account_strategy: str,
+    state_file: str,
+    page_url: str,
+    attempt_number: int,
+    max_attempts: int,
+) -> str:
+    """Write a machine-searchable marker followed by readable diagnostics."""
+    error_code, category = _classify_playwright_timeout(error, stage)
+    marker = {
+        "code": error_code,
+        "category": category,
+        "stage": stage,
+        "task": task_name,
+        "account_strategy": account_strategy,
+        "state_file": state_file,
+        "page_url": str(page_url or "")[:1_000],
+        "exception_type": type(error).__name__,
+        "attempt": attempt_number,
+        "max_attempts": max_attempts,
+    }
+    print(f"\n[SCRAPER_ERROR] {json.dumps(marker, ensure_ascii=False)}")
+    print(f"[错误标识] {error_code}")
+    print(f"[错误分类] {category}")
+    print(f"[错误阶段] {stage}")
+    print(f"[尝试次数] {attempt_number}/{max_attempts}")
+    print(f"[账号上下文] 策略={account_strategy}, 登录状态={state_file}")
+    print(f"[页面URL] {page_url or 'N/A'}")
+    print(f"[原始异常]\n{error}")
+    return error_code
+
+
 async def _notify_task_failure(
     task_config: dict, reason: str, *, cookie_path: Optional[str]
 ) -> None:
@@ -539,7 +596,13 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         picked = proxy_pool.pick_random()
         return picked or selected_proxy
 
-    async def _run_scrape_attempt(state_file: str, proxy_server: Optional[str]) -> int:
+    async def _run_scrape_attempt(
+        state_file: str,
+        proxy_server: Optional[str],
+        *,
+        attempt_number: int,
+        max_attempts: int,
+    ) -> int:
         processed_item_count = 0
         stop_scraping = False
 
@@ -657,9 +720,11 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
             """)
 
             page = await context.new_page()
+            current_stage = "browser_page_created"
 
             try:
                 # 步骤 0 - 模拟真实用户：先访问首页（重要的反检测措施）
+                current_stage = "home_navigation"
                 log_time("步骤 0 - 模拟真实用户访问首页...")
                 await page.goto(
                     "https://www.goofish.com/",
@@ -680,6 +745,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 log_time(f"目标URL: {search_url}")
 
                 # 先监听搜索接口响应，再执行导航，避免错过首次请求
+                current_stage = "search_initial_response"
                 async with page.expect_response(
                     is_search_results_response, timeout=30000
                 ) as initial_response_info:
@@ -695,6 +761,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                 initial_response = await initial_response_info.value
 
                 # 等待页面加载出关键筛选元素，以确认已成功进入搜索结果页
+                current_stage = "search_filter_readiness"
                 try:
                     await page.wait_for_selector("text=新发布", timeout=15000)
                 except PlaywrightTimeoutError as e:
@@ -764,6 +831,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     print("LOG: 未检测到广告弹窗。")
 
                 final_response = None
+                current_stage = "filter_application"
                 log_time("步骤 2 - 应用筛选条件...")
                 if new_publish_option:
                     try:
@@ -974,6 +1042,7 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                         print("LOG: 警告 - 未找到价格输入容器。")
 
                 log_time("所有筛选已完成，开始处理商品列表...")
+                current_stage = "result_processing"
 
                 current_response = (
                     final_response
@@ -1238,7 +1307,16 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
                     raise LoginRequiredError(
                         f"Login required: redirected to {page.url} (cookies/state likely expired)"
                     ) from e
-                print(f"\n操作超时错误: 页面元素或网络响应未在规定时间内出现。\n{e}")
+                _log_classified_timeout(
+                    e,
+                    stage=current_stage,
+                    task_name=task_config.get("task_name", "未命名任务"),
+                    account_strategy=runtime_plan["strategy"],
+                    state_file=state_file,
+                    page_url=page.url,
+                    attempt_number=attempt_number,
+                    max_attempts=max_attempts,
+                )
                 raise
             except asyncio.CancelledError:
                 log_time("收到取消信号，正在终止当前爬虫任务...")
@@ -1346,13 +1424,19 @@ async def scrape_xianyu(task_config: dict, debug_limit: int = 0):
         state_path = selected_account.value if selected_account else STATE_FILE
         last_state_path = state_path
         proxy_server = selected_proxy.value if selected_proxy else None
-        if rotation_settings["account_enabled"]:
-            print(f"账号轮换：使用登录状态 {state_path}")
+        print(
+            f"账号选择：策略={runtime_plan['strategy']}，使用登录状态 {state_path}"
+        )
         if rotation_settings["proxy_enabled"] and proxy_server:
             print(f"IP 轮换：使用代理 {proxy_server}")
 
         try:
-            processed_item_count += await _run_scrape_attempt(state_path, proxy_server)
+            processed_item_count += await _run_scrape_attempt(
+                state_path,
+                proxy_server,
+                attempt_number=attempt,
+                max_attempts=attempt_limit,
+            )
             last_error = ""
             FAILURE_GUARD.record_success(task_name_for_guard)
             break

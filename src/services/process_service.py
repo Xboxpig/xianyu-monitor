@@ -8,6 +8,7 @@ import contextlib
 import os
 import signal
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Awaitable, Callable, Dict, TextIO
 
@@ -20,6 +21,19 @@ from src.utils import build_task_log_path
 STOP_TIMEOUT_SECONDS = 20
 SPIDER_DEBUG_LIMIT_ENV = "SPIDER_DEBUG_LIMIT"
 LifecycleHook = Callable[[int], Awaitable[None] | None]
+
+
+@dataclass(frozen=True)
+class TaskStartError(RuntimeError):
+    """A start failure that can be surfaced by the manual-start API."""
+
+    code: str
+    message: str
+    status_code: int = 500
+    context: dict | None = None
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class ProcessService:
@@ -132,11 +146,24 @@ class ProcessService:
         self.task_names[task_id] = task_name
         self.exit_watchers[task_id] = asyncio.create_task(self._watch_process_exit(process))
 
-    async def start_task(self, task_id: int, task_name: str) -> bool:
+    async def start_task(
+        self,
+        task_id: int,
+        task_name: str,
+        *,
+        raise_on_failure: bool = False,
+    ) -> bool:
         """启动任务进程"""
         await self._drain_finished_process(task_id)
         if self.is_running(task_id):
             print(f"任务 '{task_name}' (ID: {task_id}) 已在运行中")
+            if raise_on_failure:
+                raise TaskStartError(
+                    code="TASK_ALREADY_RUNNING",
+                    message=f"任务“{task_name}”已在运行中。",
+                    status_code=409,
+                    context={"task_id": task_id, "task_name": task_name},
+                )
             return False
 
         decision = self.failure_guard.should_skip_start(
@@ -145,6 +172,35 @@ class ProcessService:
         )
         if decision.skip:
             await self._notify_skip(task_name, decision)
+            if raise_on_failure:
+                paused_until = (
+                    decision.paused_until.isoformat()
+                    if decision.paused_until is not None
+                    else None
+                )
+                paused_until_display = (
+                    decision.paused_until.strftime("%Y-%m-%d %H:%M:%S %z")
+                    if decision.paused_until is not None
+                    else "未知时间"
+                )
+                raise TaskStartError(
+                    code="TASK_PAUSED_BY_FAILURE_GUARD",
+                    message=(
+                        f"任务“{task_name}”已被 FailureGuard 暂停至 "
+                        f"{paused_until_display}；连续失败 "
+                        f"{decision.consecutive_failures}/{self.failure_guard.threshold}；"
+                        f"最近错误：{decision.reason}"
+                    ),
+                    status_code=409,
+                    context={
+                        "task_id": task_id,
+                        "task_name": task_name,
+                        "paused_until": paused_until,
+                        "consecutive_failures": decision.consecutive_failures,
+                        "failure_threshold": self.failure_guard.threshold,
+                        "last_error": decision.reason,
+                    },
+                )
             return False
 
         log_file_path = ""
@@ -155,6 +211,18 @@ class ProcessService:
         except Exception as exc:
             self._close_log_handle(log_file_handle)
             print(f"启动任务 '{task_name}' 失败: {exc}")
+            if raise_on_failure:
+                reason = f"{type(exc).__name__}: {exc}"
+                raise TaskStartError(
+                    code="TASK_PROCESS_START_FAILED",
+                    message=f"任务“{task_name}”的爬虫进程启动失败：{reason}",
+                    status_code=500,
+                    context={
+                        "task_id": task_id,
+                        "task_name": task_name,
+                        "reason": reason,
+                    },
+                ) from exc
             return False
 
         self._register_runtime(task_id, task_name, process, log_file_path, log_file_handle)

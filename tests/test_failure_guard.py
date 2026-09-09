@@ -74,3 +74,26 @@ def test_failure_guard_auto_recovers_on_cookie_change(tmp_path):
         now=base + timedelta(minutes=1),
     )
     assert recovered.skip is False
+
+
+def test_failure_guard_auto_recovers_from_recorded_cookie_path(tmp_path):
+    guard_path = tmp_path / "guard.json"
+    cookie_path = tmp_path / "rotated-account.json"
+    cookie_path.write_text("{}", encoding="utf-8")
+
+    guard = FailureGuard(
+        path=str(guard_path),
+        threshold=1,
+        pause_seconds=3 * 24 * 60 * 60,
+        tz_name="Asia/Shanghai",
+    )
+    base = datetime(2026, 3, 4, 12, 0, 0)
+
+    guard.record_failure("task-a", "baxia-dialog", cookie_path=str(cookie_path), now=base)
+    assert guard.should_skip_start("task-a", now=base).skip is True
+
+    cookie_path.write_text('{"updated": true}', encoding="utf-8")
+
+    recovered = guard.should_skip_start("task-a", now=base + timedelta(minutes=1))
+    assert recovered.skip is False
+    assert recovered.reason == "cookie_updated"

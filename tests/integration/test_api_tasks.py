@@ -2,6 +2,7 @@ import asyncio
 import time
 
 from src.api.routes import tasks as tasks_routes
+from src.services.process_service import TaskStartError
 
 
 def test_create_list_update_delete_task(api_client, api_context, sample_task_payload):
@@ -56,6 +57,82 @@ def test_start_stop_task_updates_status(api_client, api_context, sample_task_pay
     process_service = api_context["process_service"]
     assert process_service.started == [(0, sample_task_payload["task_name"])]
     assert process_service.stopped == [0]
+
+
+def test_start_status_update_does_not_clear_fixed_account(
+    api_client,
+    sample_task_payload,
+):
+    payload = dict(sample_task_payload)
+    payload["account_strategy"] = "fixed"
+    payload["account_state_file"] = "state/123.json"
+    assert api_client.post("/api/tasks/", json=payload).status_code == 200
+
+    assert api_client.post("/api/tasks/start/0").status_code == 200
+    running_task = api_client.get("/api/tasks/0").json()
+
+    assert running_task["is_running"] is True
+    assert running_task["account_strategy"] == "fixed"
+    assert running_task["account_state_file"] == "state/123.json"
+
+
+def test_start_task_exposes_failure_guard_code_and_context(
+    api_client,
+    api_context,
+    sample_task_payload,
+    monkeypatch,
+):
+    assert api_client.post("/api/tasks/", json=sample_task_payload).status_code == 200
+
+    async def blocked_start(_task_id, _task_name, *, raise_on_failure=False):
+        assert raise_on_failure is True
+        raise TaskStartError(
+            code="TASK_PAUSED_BY_FAILURE_GUARD",
+            message=(
+                "任务“Sony A7M4”已被 FailureGuard 暂停至 2026-09-10 10:47:12 +0800；"
+                "连续失败 3/3；最近错误：TimeoutError: waiting for response"
+            ),
+            status_code=409,
+            context={
+                "paused_until": "2026-09-10T10:47:12+08:00",
+                "consecutive_failures": 3,
+                "failure_threshold": 3,
+                "last_error": "TimeoutError: waiting for response",
+            },
+        )
+
+    monkeypatch.setattr(api_context["process_service"], "start_task", blocked_start)
+
+    response = api_client.post("/api/tasks/start/0")
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body["code"] == "TASK_PAUSED_BY_FAILURE_GUARD"
+    assert "错误代码：TASK_PAUSED_BY_FAILURE_GUARD" in body["detail"]
+    assert "连续失败 3/3" in body["detail"]
+    assert "TimeoutError: waiting for response" in body["detail"]
+    assert body["context"]["paused_until"] == "2026-09-10T10:47:12+08:00"
+
+
+def test_start_task_exposes_generic_process_failure_code(
+    api_client,
+    api_context,
+    sample_task_payload,
+    monkeypatch,
+):
+    assert api_client.post("/api/tasks/", json=sample_task_payload).status_code == 200
+
+    async def failed_start(_task_id, _task_name, *, raise_on_failure=False):
+        assert raise_on_failure is True
+        return False
+
+    monkeypatch.setattr(api_context["process_service"], "start_task", failed_start)
+
+    response = api_client.post("/api/tasks/start/0")
+
+    assert response.status_code == 500
+    assert response.json()["code"] == "TASK_PROCESS_START_FAILED"
+    assert "错误代码：TASK_PROCESS_START_FAILED" in response.json()["detail"]
 
 
 def test_task_ai_analysis_control_endpoints(

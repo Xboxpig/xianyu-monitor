@@ -51,6 +51,40 @@ def test_task_apply_update():
     assert updated.task_name == task.task_name
 
 
+def test_partial_status_update_preserves_fixed_account_binding():
+    task = Task(
+        id=1,
+        task_name="Sony A7M4",
+        enabled=True,
+        keyword="sony a7m4",
+        description="body",
+        max_pages=2,
+        personal_only=True,
+        ai_prompt_base_file="prompts/base_prompt.txt",
+        ai_prompt_criteria_file="prompts/sony_a7m4_criteria.txt",
+        account_strategy="fixed",
+        account_state_file="state/123.json",
+        is_running=False,
+    )
+
+    update = TaskUpdate(is_running=True)
+    updated = task.apply_update(update)
+
+    assert update.model_dump(exclude_unset=True) == {"is_running": True}
+    assert updated.is_running is True
+    assert updated.account_strategy == "fixed"
+    assert updated.account_state_file == "state/123.json"
+
+
+def test_partial_account_file_update_still_infers_fixed_strategy():
+    update = TaskUpdate(account_state_file=" state/123.json ")
+
+    assert update.model_dump(exclude_unset=True) == {
+        "account_state_file": "state/123.json",
+        "account_strategy": "fixed",
+    }
+
+
 def test_legacy_keyword_groups_are_flattened_to_keyword_rules():
     task = Task(
         id=1,

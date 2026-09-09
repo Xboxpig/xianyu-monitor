@@ -188,9 +188,11 @@ class FailureGuard:
 
     def _update_task(self, task_key: str, updater) -> dict:
         _ensure_parent_dir(self.path)
-        with open(self.path, "a+", encoding="utf-8") as fh:
+        # Lock a sidecar rather than the JSON target. Windows cannot atomically
+        # replace a file while another handle still has that target open.
+        lock_path = f"{self.path}.lock"
+        with open(lock_path, "a+", encoding="utf-8") as fh:
             with _FileLock(fh):
-                fh.seek(0)
                 data = self._load()
                 tasks = data.setdefault("tasks", {})
                 entry = tasks.get(task_key) or {}
@@ -237,8 +239,18 @@ class FailureGuard:
         last_reason = (entry.get("last_failure_reason") or "").strip() or "未知错误"
         last_notified_date = entry.get("last_notified_date")
 
+        # Auto/rotate account strategies may not know which state file will be
+        # selected until the scraper starts. Reuse the state file recorded by
+        # the last failure so an updated login state can still reopen the
+        # circuit before spawning the scraper process.
+        effective_cookie_path = cookie_path
+        if not effective_cookie_path:
+            stored_cookie_path = entry.get("cookie_path")
+            if isinstance(stored_cookie_path, str) and stored_cookie_path.strip():
+                effective_cookie_path = stored_cookie_path.strip()
+
         previous_cookie_mtime = entry.get("cookie_mtime")
-        if cookie_path and previous_cookie_mtime is not None:
+        if effective_cookie_path and previous_cookie_mtime is not None:
             try:
                 previous_cookie_mtime = float(previous_cookie_mtime)
             except (TypeError, ValueError):
@@ -247,8 +259,8 @@ class FailureGuard:
         if (
             paused_until
             and paused_until > current
-            and cookie_path
-            and _cookie_changed(cookie_path, previous_cookie_mtime)
+            and effective_cookie_path
+            and _cookie_changed(effective_cookie_path, previous_cookie_mtime)
         ):
             # cookies / 登录态更新 => 自动恢复
             self.record_success(task_key, now=current)
