@@ -16,6 +16,12 @@ prompts/
 price_history/
 data/
 venv/
+.venv/
+.pytest_cache/
+.pytest-tmp-*/
+web-ui/.npm-cache/
+_dsm_deploy_tmp/
+_patch_*.mjs
 data/
 state/
 logs/
