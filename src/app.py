@@ -154,6 +154,17 @@ async def auth_status(payload: LoginRequest):
 # 主页路由 - 服务 Vue 3 SPA
 from fastapi.responses import JSONResponse
 
+
+@app.get("/ai-queue-overlay.js", include_in_schema=False)
+async def serve_ai_queue_script():
+    return FileResponse("dist/ai-queue-overlay.js", media_type="text/javascript")
+
+
+@app.get("/ai-queue-overlay.css", include_in_schema=False)
+async def serve_ai_queue_styles():
+    return FileResponse("dist/ai-queue-overlay.css", media_type="text/css")
+
+
 @app.get("/")
 async def read_root(request: Request):
     """提供 Vue 3 SPA 的主页面"""

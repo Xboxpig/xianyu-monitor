@@ -155,6 +155,9 @@ async def run_ai_generation_job(
             user_description=req.description or "",
             reference_file_path="prompts/macbook_criteria.txt",
             progress_callback=report_progress,
+            queue_summary=req.task_name,
+            queue_generation_job_id=job_id,
+            queue_generation_mode="create",
         )
 
         await advance_job(
@@ -163,7 +166,12 @@ async def run_ai_generation_job(
             "extract",
             "正在从需求中提取结构化搜索参数。",
         )
-        extracted_params = await extract_search_params(req.description or "")
+        extracted_params = await extract_search_params(
+            req.description or "",
+            queue_summary=req.task_name,
+            queue_generation_job_id=job_id,
+            queue_generation_mode="create",
+        )
         if (
             extracted_params.get("min_price") is not None
             or extracted_params.get("max_price") is not None
@@ -200,6 +208,7 @@ async def run_criteria_regeneration_job(
     *,
     job_id: str,
     task_id: int,
+    task_name: str,
     task_update: TaskUpdate,
     description: str,
     output_filename: str,
@@ -233,6 +242,10 @@ async def run_criteria_regeneration_job(
             user_description=description,
             reference_file_path="prompts/macbook_criteria.txt",
             progress_callback=report_progress,
+            queue_summary=task_name,
+            queue_task_id=task_id,
+            queue_generation_job_id=job_id,
+            queue_generation_mode="regenerate",
         )
         await advance_job(
             generation_service,

@@ -55,6 +55,14 @@ class TaskGenerationService:
                 return None
             return deepcopy(job)
 
+    async def list_jobs(self, *, active_only: bool = True) -> list[TaskGenerationJob]:
+        """Return generation pipelines in creation order for queue observability."""
+        with self._lock:
+            jobs = list(self._jobs.values())
+            if active_only:
+                jobs = [job for job in jobs if job.status in {"queued", "running"}]
+            return deepcopy(jobs)
+
     def track(self, coroutine: Awaitable[None]) -> None:
         thread: Optional[threading.Thread] = None
 

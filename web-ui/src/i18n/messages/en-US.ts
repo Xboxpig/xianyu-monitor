@@ -67,12 +67,12 @@ const enUS = {
     openPrompts: 'Open prompt manager',
     searchUnavailable: 'Task search is only available on the dashboard...',
     accountManagement: 'Account Management',
-  },
     brandTitle: 'Goofish Monitor',
     brandSub: 'Watching for good deals for you',
     greetingMorning: 'Good morning, Admin 👋',
     greetingAfternoon: 'Good afternoon, Admin 👋',
     greetingEvening: 'Good evening, Admin 👋',
+  },
   sidebar: {
     dashboard: 'Dashboard',
     tasks: 'Tasks',

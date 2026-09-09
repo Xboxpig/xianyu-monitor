@@ -139,6 +139,16 @@ async def get_task_generation_job(
     if not job:
         raise HTTPException(status_code=404, detail="任务生成作业未找到")
     return {"job": job.model_dump(mode="json")}
+
+
+@router.get("/generation/jobs", response_model=dict)
+async def list_task_generation_jobs(
+    active_only: bool = True,
+    generation_service: TaskGenerationService = Depends(get_task_generation_service),
+):
+    """列出任务生成流水线，供全局 AI 队列持续展示。"""
+    jobs = await generation_service.list_jobs(active_only=active_only)
+    return {"jobs": [job.model_dump(mode="json") for job in jobs]}
 @router.patch("/{task_id}", response_model=dict)
 async def update_task(
     task_id: int,
@@ -191,6 +201,7 @@ async def update_task(
                 run_criteria_regeneration_job(
                     job_id=job.job_id,
                     task_id=task_id,
+                    task_name=existing_task.task_name,
                     task_update=task_update,
                     description=str(description_for_ai),
                     output_filename=output_filename,

@@ -24,7 +24,7 @@ const statusMeta = computed(() => {
 
 function resolveStepDotClass(step: TaskGenerationStep) {
   if (step.status === 'completed') return 'border-emerald-500 bg-emerald-500'
-  if (step.status === 'running') return 'border-amber-500 bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.18)]'
+  if (step.status === 'running') return 'border-blue-500 bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.18)]'
   if (step.status === 'failed') return 'border-red-500 bg-red-500'
   return 'border-slate-300 bg-white'
 }

@@ -109,6 +109,19 @@ def test_generate_keyword_mode_task_without_ai_criteria(api_client):
     assert created["keyword_rules"] == ["a7m4", "验货宝"]
 
 
+def test_list_generation_jobs_keeps_active_pipeline_visible(api_client, api_context):
+    service = api_context["task_generation_service"]
+    created = asyncio.run(service.create_job("NAS"))
+
+    response = api_client.get("/api/tasks/generation/jobs?active_only=true")
+
+    assert response.status_code == 200
+    jobs = response.json()["jobs"]
+    assert [job["job_id"] for job in jobs] == [created.job_id]
+    assert jobs[0]["task_name"] == "NAS"
+    assert jobs[0]["status"] == "queued"
+
+
 def test_generate_ai_task_returns_job_and_completes_async(api_client, api_context, monkeypatch):
     payload = {
         "task_name": "Apple Watch S10",
@@ -120,7 +133,10 @@ def test_generate_ai_task_returns_job_and_completes_async(api_client, api_contex
         "personal_only": True,
     }
 
-    async def fake_generate_criteria(*_args, **_kwargs):
+    criteria_call = {}
+
+    async def fake_generate_criteria(*_args, **kwargs):
+        criteria_call.update(kwargs)
         await asyncio.sleep(0.05)
         return (
             "### **第一部分：核心分析原则 (不可违背)**\n"
@@ -167,6 +183,9 @@ def test_generate_ai_task_returns_job_and_completes_async(api_client, api_contex
     assert latest_job["task"]["task_name"] == payload["task_name"]
     assert latest_job["task"]["ai_prompt_criteria_file"].endswith("_criteria.txt")
     assert latest_job["task"]["analyze_images"] is False
+    assert criteria_call["queue_generation_job_id"] == job["job_id"]
+    assert criteria_call["queue_generation_mode"] == "create"
+    assert criteria_call.get("queue_task_id") is None
     assert api_context["scheduler_service"].reload_calls == 1
 
 
@@ -178,7 +197,10 @@ def test_regenerate_criteria_returns_job_with_character_progress(
 ):
     assert api_client.post("/api/tasks/", json=sample_task_payload).status_code == 200
 
+    criteria_call = {}
+
     async def fake_generate_criteria(*_args, **kwargs):
+        criteria_call.update(kwargs)
         progress_callback = kwargs["progress_callback"]
         await progress_callback("llm", "正在接收 SSE 输出，已生成 321 字符。", 321)
         return "新的完整分析标准" * 80
@@ -207,6 +229,9 @@ def test_regenerate_criteria_returns_job_with_character_progress(
 
     assert latest_job["generated_characters"] == 321
     assert latest_job["task"]["description"] == "更新后的详细需求"
+    assert criteria_call["queue_task_id"] == 0
+    assert criteria_call["queue_generation_job_id"] == job_id
+    assert criteria_call["queue_generation_mode"] == "regenerate"
     assert api_context["scheduler_service"].reload_calls == 2
 
 
