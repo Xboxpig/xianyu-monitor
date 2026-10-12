@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseSearch, parseDetail, parseSeller, collectSnapshot } from "../collector.js";
+import { parseSearch, parseDetail, parseSeller, collectSnapshot, readPage } from "../collector.js";
 
 test("search response preserves price, tags, seller and publication time", () => {
   const fixture = JSON.parse(readFileSync(new URL("../../tests/fixtures/search_results.json", import.meta.url)));
@@ -48,4 +48,25 @@ test("empty pages, blocked pages and unavailable data are distinct", () => {
   assert.deepEqual(collectSnapshot({ entries: [], domItems: [], empty: true, hasMore: false }, command).items, []);
   assert.equal(collectSnapshot({ attention: "login required" }, command).outcome, "attention");
   assert.equal(collectSnapshot({ entries: [{ url: "idlemtopsearch.pc.search", body: { ret: ["FAIL_SYS_BUSY"] } }] }, command).outcome, "attention");
+});
+
+test('cleared verification and newer successful responses stop blocking a page', () => {
+  const saved = Object.fromEntries(['window', 'document', 'location', 'getComputedStyle'].map(key => [key, globalThis[key]]));
+  let visible = false;
+  globalThis.location = { href: 'https://www.goofish.com/personal?userId=1' };
+  globalThis.window = { __xianyuNativeCapture: { sequence: 2, entries: [
+    { url: 'https://h5api.m.goofish.com/h5/mtop.idle.web.user.page.head/1.0/?callback=1', body: { ret: ['FAIL_SYS_USER_VALIDATE'] }, sequence: 1 },
+    { url: 'https://h5api.m.goofish.com/h5/mtop.idle.web.user.page.head/1.0/?callback=2', body: { ret: ['SUCCESS'] }, sequence: 2 },
+  ] } };
+  globalThis.document = { readyState: 'complete', body: { innerText: '' },
+    querySelectorAll: selector => selector === '[role="dialog"]' ? [] : [{ getClientRects: () => visible ? [1] : [] }] };
+  globalThis.getComputedStyle = () => ({ visibility: 'visible' });
+  try {
+    assert.equal(readPage('seller').ready, true);
+    visible = true;
+    assert.ok(readPage('seller').attention);
+    visible = false;
+    window.__xianyuNativeCapture.entries.pop();
+    assert.ok(readPage('seller').attention);
+  } finally { for (const [key, value] of Object.entries(saved)) globalThis[key] = value; }
 });

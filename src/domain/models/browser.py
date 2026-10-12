@@ -8,6 +8,7 @@ class BrowserClient(BaseModel):
     client_id: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     name: str = Field(default="Chrome", max_length=100)
     account_state_file: str | None = Field(default=None, max_length=300)
+    profile_directory: str | None = Field(default=None, max_length=100)
     version: str = Field(default="", max_length=30)
 
 
@@ -74,6 +75,5 @@ class BrowserResume(BaseModel):
 
 
 class BrowserSetup(BaseModel):
-    username: str = Field(max_length=200)
-    password: str = Field(max_length=1000)
     launch: bool = False
+    profile_directory: str | None = Field(default=None, max_length=100)

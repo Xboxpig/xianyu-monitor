@@ -42,7 +42,7 @@ const {
 } = useTaskGenerationJob()
 
 function resolveAccountPath(accountName: string) {
-  const match = (props.accountOptions || []).find((account) => account.name === accountName)
+  const match = (props.accountOptions || []).find((account) => account.path === accountName || account.name === accountName)
   return match ? match.path : ''
 }
 

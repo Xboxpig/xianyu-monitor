@@ -5,9 +5,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from src.api.dependencies import get_process_service
 from src.domain.models.browser import BrowserClient, BrowserReport, BrowserResume, BrowserSetup
-from src.infrastructure.config.settings import settings
 from src.services.native_browser_service import NativeBrowserService
 from src.services.native_chrome_launcher import launch_chrome
+from src.infrastructure.desktop.chrome_profiles import list_chrome_profiles, require_chrome_profile
 
 router = APIRouter(prefix="/api/browser", tags=["browser"])
 
@@ -47,19 +47,27 @@ async def status(request: Request, service=Depends(get_process_service)):
 
 @router.post("/setup")
 async def setup(data: BrowserSetup, service=Depends(get_native)):
-    if (not secrets.compare_digest(data.username.encode(), settings.web_username.encode())
-            or not secrets.compare_digest(data.password.encode(), settings.web_password.encode())):
-        raise HTTPException(401, "管理员用户名或密码错误。")
     if data.launch:
         try:
-            launch_chrome("https://www.goofish.com")
-        except (OSError, RuntimeError) as exc:
+            launch_chrome("https://www.goofish.com", profile_directory=data.profile_directory)
+        except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
     return {"token": service.token()}
 
 
+@router.get("/profiles")
+async def profiles(service=Depends(get_native)):
+    return {"profiles": list_chrome_profiles()}
+
+
 @router.post("/poll")
 async def poll(data: BrowserClient, service=Depends(authenticated)):
+    if data.profile_directory:
+        try:
+            require_chrome_profile(data.profile_directory)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        data.account_state_file = "chrome-profile:" + data.profile_directory
     return await service.poll(data)
 
 

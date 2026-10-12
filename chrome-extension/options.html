@@ -13,13 +13,14 @@
       <label>配对令牌<input id="token" type="password" autocomplete="off" required></label>
       <p>在蓝色管理界面的「系统设置 → Chrome 采集」中获取令牌。</p>
       <label>浏览器名称<input id="name" value="本机 Chrome" maxlength="100" required></label>
-      <label>绑定账号文件（可选）<input id="account" placeholder="例如 state/my-account.json"></label>
-      <p>固定账号任务按此名称选择 Chrome profile。只填写账号管理中的路径，不会导入或切换 cookies。</p>
+      <label>选择 Chrome 账户<select id="account" required><option value="">请先读取 Chrome 账户</option></select></label>
+      <div class="actions"><button type="button" id="refreshProfiles">读取 Chrome 账户</button><button type="button" id="openProfile">打开所选账户</button></div>
+      <p>选择当前 Chrome 窗口使用的账户。需要切换时，打开所选账户，并在该窗口安装和启用采集扩展。固定账号任务使用同一个 Chrome 账户。</p>
       <label class="toggle"><input id="enabled" type="checkbox">启用后台采集连接</label>
       <button>保存并连接</button>
     </form>
     <p id="status" role="status"></p>
-    <p>遇到登录或安全验证时会恢复采集窗口，请完成处理后在扩展弹窗中点击「继续」。</p>
+    <p>遇到登录或安全验证时会恢复采集窗口，请在页面中完成处理。</p>
   </main>
   <script type="module" src="options.js"></script>
 </body>

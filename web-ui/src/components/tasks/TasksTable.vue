@@ -33,6 +33,7 @@ interface Props {
   tasks: Task[]
   isLoading: boolean
   stoppingIds?: Set<number>
+  accounts?: { name: string; path: string }[]
 }
 
 const props = defineProps<Props>()
@@ -62,6 +63,9 @@ const resolveAccountStrategyLabel = (task: Task) => {
 
 const resolveAccountName = (task: Task) => {
   if (!task.account_state_file) return t('tasks.table.systemSelected')
+  const account = props.accounts?.find((item) => item.path === task.account_state_file)
+  if (account) return account.name
+  if (task.account_state_file.startsWith('chrome-profile:')) return task.account_state_file.slice('chrome-profile:'.length)
   const segments = task.account_state_file.split('/')
   const filename = segments[segments.length - 1] || task.account_state_file
   return filename.replace('.json', '')

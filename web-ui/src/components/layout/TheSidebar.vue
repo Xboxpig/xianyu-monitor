@@ -11,12 +11,14 @@ import {
   ChevronRight
 } from 'lucide-vue-next'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { useBrowserStatus } from '@/composables/useBrowserStatus'
 import { useI18n } from 'vue-i18n'
 
 const emit = defineEmits<{
   (event: 'navigate'): void
 }>()
 const { isConnected } = useWebSocket()
+const { status: browserStatus, statusError } = useBrowserStatus()
 const { t } = useI18n()
 
 const navItems = computed(() => [
@@ -84,6 +86,10 @@ const connectionTone = computed(() =>
          <div class="flex items-center gap-2">
             <div class="w-2 h-2 rounded-full" :class="connectionTone"></div>
             <span class="text-xs font-bold text-slate-600">{{ connectionLabel }}</span>
+         </div>
+         <div v-if="browserStatus?.backend === 'native_chrome'" class="mt-3 flex items-center gap-2" data-testid="chrome-connection-status">
+            <div class="h-2 w-2 shrink-0 rounded-full" :class="browserStatus.connected && !statusError ? 'bg-emerald-500' : 'bg-amber-400'"></div>
+            <span class="text-xs font-bold text-slate-600">{{ t(statusError ? 'nativeBrowser.statusUnavailable' : browserStatus.connected ? 'nativeBrowser.connected' : 'nativeBrowser.disconnected') }}</span>
          </div>
       </div>
     </div>

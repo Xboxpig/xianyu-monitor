@@ -319,6 +319,7 @@ onMounted(fetchAccountOptions)
     </div>
 
     <TasksTable
+      :accounts="accountOptions"
       :tasks="tasks"
       :is-loading="isLoading"
       :stopping-ids="stoppingTaskIds"

@@ -7,6 +7,7 @@ let nextCommand = null;
 let failReport = false;
 let snapshot = { entries: [], domItems: [{ id: "123", title: "item", price: "10" }], hasMore: false };
 let nextClicks = 0;
+let attention = null;
 const originalTimer = globalThis.setTimeout;
 globalThis.setTimeout = () => 1;
 const event = { addListener() {} };
@@ -39,15 +40,19 @@ globalThis.chrome = {
   } },
 };
 globalThis.fetch = async (url, options) => {
+  if (url.endsWith('/resume')) {
+    events.push(['resume', JSON.parse(options.body)]);
+    attention = null;
+  }
   if (url.endsWith("/report")) {
     if (failReport) throw Error("network unavailable");
     events.push(["report", JSON.parse(options.body)]);
     nextCommand = null;
   }
-  return { ok: true, async json() { return url.endsWith("/poll") ? { command: nextCommand, attention: null } : { accepted: true }; } };
+  return { ok: true, async json() { return url.endsWith("/poll") ? { command: nextCommand, attention } : { accepted: true }; } };
 };
 // Importing a service worker also runs its startup tick. Initially it is disabled.
-const { tick, validateEndpoint } = await import("../native-bridge.js");
+const { tick, validateEndpoint, pageCheckpoint } = await import("../native-bridge.js");
 await Promise.resolve();
 
 test("only loopback endpoints are accepted", () => {
@@ -96,7 +101,7 @@ test("pagination checkpoints do not click next again after a worker restart", as
   assert.equal(nextClicks, 1);
 });
 
-test("manual resume preserves an in-progress page turn when no page indicator exists", async () => {
+test("resumed commands preserve an in-progress page turn when no page indicator exists", async () => {
   nextCommand = { run_id: "resume-run", command_id: "resume-command", action: "search_next",
     url: "https://www.goofish.com/search?q=test", task: {}, page: 2, resume: true };
   storage.nativeState = { runId: "resume-run", clientId: "chrome-client-1", command: null,
@@ -109,6 +114,28 @@ test("manual resume preserves an in-progress page turn when no page indicator ex
   assert.equal(storage.nativeState.phase, "read");
   assert.equal(storage.nativeState.searchPage, 2);
   assert.equal(nextClicks, before);
+});
+
+test('waiting task resumes only after a verified page has new usable data', async () => {
+  const command = { run_id: 'waiting-run', command_id: 'waiting-command', action: 'search',
+    url: 'https://www.goofish.com/search?q=test', page: 1, task: {} };
+  nextCommand = null;
+  attention = { run_id: command.run_id, message: '请检查页面' };
+  snapshot = { href: command.url, sequence: 1, ready: true, entries: [], domItems: [{ id: '123', title: 'item', price: '10' }] };
+  storage.nativeState = { runId: command.run_id, lastCommand: command, command: null, phase: 'read',
+    tabs: { search: 20 }, tabKey: 'search', windowId: 10, attentionCheckpoint: pageCheckpoint(snapshot) };
+  const before = events.filter(event => event[0] === 'resume').length;
+  await tick();
+  assert.equal(events.filter(event => event[0] === 'resume').length, before);
+  snapshot = { ...snapshot, sequence: 2, attention: 'verification required' };
+  await tick();
+  assert.equal(events.filter(event => event[0] === 'resume').length, before);
+  snapshot = { ...snapshot, attention: null };
+  await tick();
+  assert.equal(events.filter(event => event[0] === 'resume').length, before + 1);
+  assert.equal(storage.nativeState.phase, 'read');
+  assert.equal(storage.nativeState.attention, '');
+  assert.deepEqual(events.findLast(event => event[0] === 'resume')[1], { client_id: 'chrome-client-1', run_id: 'waiting-run' });
 });
 
 test.after(() => { globalThis.setTimeout = originalTimer; });

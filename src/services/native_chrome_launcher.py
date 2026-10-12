@@ -5,6 +5,7 @@ import sys
 import time
 from urllib.request import urlopen
 from pathlib import Path
+from src.infrastructure.desktop.chrome_profiles import chrome_user_data, require_chrome_profile
 
 
 def find_chrome() -> Path:
@@ -29,8 +30,13 @@ def find_chrome() -> Path:
     raise RuntimeError("未找到已安装的 Chrome，请安装 Chrome 或设置 CHROME_PATH。")
 
 
-def launch_chrome(url: str) -> None:
-    subprocess.Popen([str(find_chrome()), "--new-window", url], close_fds=True)
+def launch_chrome(url: str, *, profile_directory: str | None = None) -> None:
+    arguments = [str(find_chrome())]
+    if profile_directory is not None:
+        arguments.append("--profile-directory=" + require_chrome_profile(profile_directory))
+        if os.getenv("CHROME_USER_DATA_DIR"):
+            arguments.append("--user-data-dir=" + str(chrome_user_data()))
+    subprocess.Popen([*arguments, "--new-window", url], close_fds=True)
 
 
 if __name__ == "__main__":

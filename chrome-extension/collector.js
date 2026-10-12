@@ -97,13 +97,15 @@ export function parseSeller(entries) {
 export function readPage(action) {
   const entries = window.__xianyuNativeCapture?.entries || [];
   const content = document.body?.innerText || "";
+  const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden';
+  const latest = new Map(entries.map(entry => [new URL(entry.url, location.href).pathname, entry]));
   const barrier = /passport\.goofish|mini_login/.test(location.href) ||
-    document.querySelector('iframe[src*="baxia"], #baxia-dialog-mask, [id*="nc_"][id$="_wrapper"]') ||
-    entries.some(entry => (entry.body.ret || []).some(value => /FAIL_SYS_USER_VALIDATE|SESSION_EXPIRED|TOKEN_EXPIRED|FAIL_SYS_LOGIN/.test(value)));
-  const login = [...document.querySelectorAll('[role="dialog"]')].some(dialog => /扫码登录|请先登录|安全验证|滑动验证/.test(dialog.innerText));
-  if (barrier || login) return { attention: "请在 Chrome 中完成登录或安全验证，然后点击扩展中的继续。" };
+    [...document.querySelectorAll('iframe[src*="baxia"], #baxia-dialog-mask, [id*="nc_"][id$="_wrapper"]')].some(visible) ||
+    [...latest.values()].some(entry => (entry.body.ret || []).some(value => /FAIL_SYS_USER_VALIDATE|SESSION_EXPIRED|TOKEN_EXPIRED|FAIL_SYS_LOGIN/.test(value)));
+  const login = [...document.querySelectorAll('[role="dialog"]')].some(dialog => visible(dialog) && /扫码登录|请先登录|安全验证|滑动验证/.test(dialog.innerText));
+  if (barrier || login) return { href: location.href, sequence: window.__xianyuNativeCapture?.sequence || 0, attention: "请在 Chrome 页面中完成登录或安全验证，页面恢复后将自动继续。" };
   const state = { entries, sequence: window.__xianyuNativeCapture?.sequence || 0,
-    ready: document.readyState === "complete", content: content.slice(0, 30000) };
+    href: location.href, ready: document.readyState === "complete", content: content.slice(0, 30000) };
   if (action === "search" || action === "search_next") {
     const activePage = document.querySelector('.ant-pagination-item-active, [aria-current="page"]');
     state.currentPage = Number(activePage?.textContent.trim()) || null;
@@ -172,7 +174,7 @@ export async function interactPage(operation, options = {}) {
       const trigger = exact("新发布");
       if (trigger) { trigger.click(); await settle(); }
       const option = exact(options.new_publish_option);
-      if (!option) return { attention: "请在搜索页面设置发布时间筛选：" + options.new_publish_option + "，然后点击继续。" };
+      if (!option) return { attention: "请在搜索页面设置发布时间筛选：" + options.new_publish_option + "，页面数据恢复后将自动继续。" };
       if (!selected(option)) { option.click(); changed = true; await settle(); }
     }
     let regionApplied = false;

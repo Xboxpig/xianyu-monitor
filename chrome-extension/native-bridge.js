@@ -58,6 +58,30 @@ async function execute(tabId, func, args) {
   return result[0]?.result;
 }
 
+export function pageCheckpoint(snapshot) {
+  return JSON.stringify([snapshot.href, snapshot.sequence || 0, !!snapshot.attention,
+    snapshot.currentPage, snapshot.domItems?.length, snapshot.domItem?.id, snapshot.empty]);
+}
+
+async function resumeWhenReady(state, attention) {
+  const command = state.lastCommand;
+  if (!command || command.run_id !== attention.run_id) return;
+  let tab;
+  try { tab = await chrome.tabs.get(state.tabs?.[state.tabKey]); } catch (_) { return; }
+  if (tab.windowId !== state.windowId || tab.status !== 'complete' || new URL(tab.url).hostname !== 'www.goofish.com') return;
+  const expected = new URL(command.url);
+  const actual = new URL(tab.url);
+  if (actual.pathname !== expected.pathname) return;
+  const idKey = command.action === 'detail' ? 'id' : command.action === 'seller' ? 'userId' : null;
+  if (idKey && actual.searchParams.get(idKey) !== expected.searchParams.get(idKey)) return;
+  const snapshot = await execute(tab.id, readPage, [command.action]);
+  if (!snapshot?.ready || snapshot.attention) return;
+  const result = collectSnapshot(snapshot, command);
+  if (result?.outcome !== 'ok') return;
+  if (!attention.message.includes('扩展已断开') && pageCheckpoint(snapshot) === state.attentionCheckpoint) return;
+  await resume();
+}
+
 async function ensureTab(state, command) {
   const target = new URL(command.url);
   const expectedPath = command.action === "detail" ? "/item" : command.action === "seller" ? "/personal" : "/search";
@@ -99,7 +123,7 @@ async function collectStep(state) {
   const tabId = state.tabs[state.tabKey];
   let tab;
   try { tab = await chrome.tabs.get(tabId); } catch (_) {
-    await queueReport(state, { outcome: "attention", message: "采集标签页已关闭，请点击扩展中的继续以重新打开。" });
+    await queueReport(state, { outcome: "attention", message: "采集标签页已关闭，请在管理界面停止任务后重新启动。" });
     return;
   }
   if (tab.discarded) {
@@ -112,6 +136,7 @@ async function collectStep(state) {
     return;
   }
   const snapshot = await execute(tabId, readPage, [command.action]);
+  state.pageCheckpoint = pageCheckpoint(snapshot || {});
   if (command.resume && snapshot?.sequence < state.searchSequenceFloor) state.searchSequenceFloor = 0;
   if (snapshot?.attention) {
     await queueReport(state, { outcome: "attention", message: snapshot.attention });
@@ -124,7 +149,7 @@ async function collectStep(state) {
       state.phase = state.searchPage < command.page ? "load" : "read";
       await save(state);
     } else if (Date.now() - state.startedAt > 120000) {
-      await queueReport(state, { outcome: "attention", message: "分页请求未返回。请检查搜索页面的当前页码，然后点击继续。" });
+      await queueReport(state, { outcome: "attention", message: "分页请求未返回。请检查搜索页面，数据恢复后将自动继续。" });
     }
     return;
   }
@@ -203,7 +228,7 @@ async function collectStep(state) {
       region_applied: state.regionApplied || false,
     });
   } else if (Date.now() - state.startedAt > 120000) {
-    await queueReport(state, { outcome: "attention", message: "未读取到页面数据。请检查页面是否已登录、商品是否存在或页面结构是否改变，然后点击继续。" });
+    await queueReport(state, { outcome: "attention", message: "未读取到页面数据。请检查登录状态和页面内容，数据恢复后将自动继续；商品不存在时请停止任务。" });
   } else {
     await save(state);
   }
@@ -216,7 +241,10 @@ async function queueReport(state, result) {
   };
   // Save before HTTP delivery so service-worker suspension cannot lose the result.
   await save(state);
-  if (result.outcome === "attention") await showAttention(state, result.message);
+  if (result.outcome === "attention") {
+    state.attentionCheckpoint = state.pageCheckpoint;
+    await showAttention(state, result.message);
+  }
 }
 
 export async function tick() {
@@ -245,10 +273,12 @@ export async function tick() {
     const response = await request(config, "poll", {
       client_id: config.client_id, name: config.name || "Chrome",
       account_state_file: config.account_state_file || null, version: chrome.runtime.getManifest().version,
+      profile_directory: config.profile_directory || null,
     });
     await chrome.storage.local.set({ nativeConnection: { online: true, error: "", checkedAt: Date.now(), attention: response.attention } });
     if (response.attention) {
       await showAttention(state, response.attention.message);
+      await resumeWhenReady(state, response.attention);
       return;
     }
     const command = response.command;
@@ -324,10 +354,6 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     void tick();
     respond({ ok: true });
     return false;
-  }
-  if (message?.type === "nativeResume") {
-    resume().then(() => respond({ ok: true })).catch(error => respond({ ok: false, error: error.message }));
-    return true;
   }
   return false;
 });

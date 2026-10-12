@@ -208,7 +208,7 @@ class NativeBrowserService:
             if not run.command or run.command["command_id"] != report.command_id:
                 raise ValueError("Stale command.")
             if report.outcome == "attention":
-                message = report.message or "请在 Chrome 中完成登录或验证，然后点击扩展中的继续。"
+                message = report.message or "请在 Chrome 页面中完成登录或验证，页面恢复后将自动继续。"
                 changed = run.waiting != message
                 run.waiting = message
                 self._log(run, "[Chrome] 等待人工处理：" + run.waiting)
@@ -353,7 +353,7 @@ class NativeBrowserService:
                 self._issue(run, old["action"], old["url"])
                 run.command["resume"] = True
                 run.waiting = ""
-                self._log(run, "[Chrome] 用户继续采集")
+                self._log(run, "[Chrome] 页面恢复，继续采集")
         return {"resumed": True}
 
     async def _watch_connections(self):
@@ -367,9 +367,9 @@ class NativeBrowserService:
                         continue
                     client = self.clients.get(run.client_id)
                     if not client or now - client["last_seen"] > CLIENT_TIMEOUT:
-                        run.waiting = "Chrome 扩展已断开。请重新打开 Chrome，并点击扩展中的继续。"
+                        run.waiting = "Chrome 扩展已断开。请重新打开 Chrome，连接和页面恢复后将自动继续。"
                     elif run.issued_at and now - run.issued_at > COMMAND_TIMEOUT:
-                        run.waiting = "页面采集超时。请检查 Chrome 中的页面，然后点击继续。"
+                        run.waiting = "页面采集超时。请检查 Chrome 中的页面，数据恢复后将自动继续。"
                     if run.waiting:
                         self._log(run, "[Chrome] " + run.waiting)
                         await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)

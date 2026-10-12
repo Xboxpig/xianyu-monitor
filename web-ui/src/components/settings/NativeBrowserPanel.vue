@@ -1,48 +1,37 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { http } from '@/lib/http'
-import { useAuth } from '@/composables/useAuth'
+import { useBrowserStatus } from '@/composables/useBrowserStatus'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
-interface BrowserStatus {
-  backend: string
-  connected: boolean
-  clients: { client_id: string; name: string; account_state_file?: string; online: boolean }[]
-  runs: { run_id: string; task_name: string; state: string; message: string; page: number }[]
-}
 const { t } = useI18n()
-const { username } = useAuth()
-const status = ref<BrowserStatus | null>(null)
-const password = ref('')
+const { status, statusError, refresh } = useBrowserStatus()
+const profiles = ref<{ directory: string; name: string; email: string }[]>([])
+const selectedProfile = ref('')
 const token = ref('')
 const error = ref('')
-const statusError = ref('')
 const working = ref(false)
-let timer: ReturnType<typeof setInterval> | undefined
-let mounted = false
-async function refresh() {
-  try {
-    status.value = await http('/api/browser/status')
-    statusError.value = ''
-  } catch (e) {
-    statusError.value = (e as Error).message
+let autoShown = false
+watch(status, (value) => {
+  if (value?.backend === 'native_chrome' && !value.connected && !autoShown) {
+    autoShown = true
+    void setup()
   }
-}
+}, { immediate: true })
 async function setup(launch = false) {
   working.value = true
   error.value = ''
   try {
     const response = await fetch('/api/browser/setup', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: username.value || '', password: password.value, launch }),
+      body: JSON.stringify({ launch, profile_directory: selectedProfile.value || null }),
     })
     const result = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`)
     token.value = result.token
-    password.value = ''
   } catch (e) {
     error.value = (e as Error).message
   } finally {
@@ -50,15 +39,14 @@ async function setup(launch = false) {
   }
 }
 onMounted(async () => {
-  mounted = true
   await refresh()
-  if (mounted) timer = setInterval(() => void refresh(), 5000)
+  if (status.value?.backend === 'native_chrome') {
+    try { profiles.value = (await http('/api/browser/profiles')).profiles }
+    catch (e) { error.value = (e as Error).message }
+  }
 })
 onUnmounted(() => {
-  mounted = false
-  clearInterval(timer)
   token.value = ''
-  password.value = ''
 })
 </script>
 
@@ -82,11 +70,14 @@ onUnmounted(() => {
           <li>{{ t('nativeBrowser.login') }}</li>
         </ol>
         <div class="space-y-3 rounded-xl border border-slate-200 p-4">
-          <label for="native-admin-password" class="block text-sm font-semibold">{{ t('nativeBrowser.password') }}</label>
-          <Input id="native-admin-password" v-model="password" type="password" autocomplete="current-password" />
+          <label for="native-chrome-account" class="block text-sm font-semibold">{{ t('nativeBrowser.selectAccount') }}</label>
+          <select id="native-chrome-account" v-model="selectedProfile" class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+            <option value="">{{ t('nativeBrowser.defaultAccount') }}</option>
+            <option v-for="profile in profiles" :key="profile.directory" :value="profile.directory">{{ profile.name }}{{ profile.email ? ' · ' + profile.email : '' }}</option>
+          </select>
           <div class="flex flex-wrap gap-3">
-            <Button :disabled="working || !password" @click="setup()">{{ t('nativeBrowser.showToken') }}</Button>
-            <Button variant="outline" :disabled="working || !password" @click="setup(true)">{{ t('nativeBrowser.openChrome') }}</Button>
+            <Button :disabled="working" @click="setup()">{{ t('nativeBrowser.showToken') }}</Button>
+            <Button variant="outline" :disabled="working" @click="setup(true)">{{ t('nativeBrowser.openChrome') }}</Button>
           </div>
           <div v-if="token" class="space-y-2">
             <label for="native-pair-token" class="text-sm">{{ t('nativeBrowser.token') }}</label>
@@ -96,7 +87,7 @@ onUnmounted(() => {
         </div>
         <div v-if="status?.clients.length" class="space-y-2">
           <div v-for="client in status.clients" :key="client.client_id" class="flex flex-wrap justify-between gap-2 rounded-xl bg-slate-50 p-3 text-sm">
-            <span>{{ client.name }} <span class="text-slate-500">{{ client.account_state_file }}</span></span>
+            <span>{{ client.name }} <span class="text-slate-500">{{ client.profile_directory }}</span></span>
             <span>{{ t(client.online ? 'nativeBrowser.online' : 'nativeBrowser.offline') }}</span>
           </div>
         </div>

@@ -2,7 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { listAccounts, getAccount, createAccount, updateAccount, deleteAccount, type AccountItem } from '@/api/accounts'
+import { listAccounts, openChromeAccount, getAccount, createAccount, updateAccount, deleteAccount, type AccountItem } from '@/api/accounts'
+import { useBrowserStatus } from '@/composables/useBrowserStatus'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -12,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { toast } from '@/components/ui/toast'
 const { t } = useI18n()
+const { status: browserStatus } = useBrowserStatus()
 
 const accounts = ref<AccountItem[]>([])
 const isLoading = ref(false)
@@ -43,6 +45,11 @@ function openCreateDialog() {
   newName.value = ''
   newContent.value = ''
   isCreateDialogOpen.value = true
+}
+
+async function openProfile(directory: string) {
+  try { await openChromeAccount(directory) }
+  catch (error) { toast({ title: t('nativeBrowser.openFailed'), description: (error as Error).message, variant: 'destructive' }) }
 }
 
 async function openEditDialog(name: string) {
@@ -126,12 +133,13 @@ onMounted(fetchAccounts)
     <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-gray-800">{{ t('accounts.title') }}</h1>
-        <p class="text-sm text-gray-500 mt-1">{{ t('accounts.description') }}</p>
+        <p class="text-sm text-gray-500 mt-1">{{ t(browserStatus?.backend === 'native_chrome' ? 'nativeBrowser.accountsHint' : 'accounts.description') }}</p>
       </div>
-      <Button class="w-full sm:w-auto" @click="openCreateDialog">{{ t('accounts.add') }}</Button>
+      <Button v-if="browserStatus?.backend === 'native_chrome'" variant="outline" @click="fetchAccounts">{{ t('common.refresh') }}</Button>
+      <Button v-else class="w-full sm:w-auto" @click="openCreateDialog">{{ t('accounts.add') }}</Button>
     </div>
 
-    <Card class="app-surface mb-6 border-none">
+    <Card v-if="browserStatus?.backend !== 'native_chrome'" class="app-surface mb-6 border-none">
       <CardHeader>
         <CardTitle>{{ t('accounts.cookieGuide.title') }}</CardTitle>
       </CardHeader>
@@ -165,7 +173,7 @@ onMounted(fetchAccounts)
     <Card class="app-surface border-none">
       <CardHeader>
         <CardTitle>{{ t('accounts.list.title') }}</CardTitle>
-        <CardDescription>{{ t('accounts.list.description') }}</CardDescription>
+        <CardDescription>{{ t(browserStatus?.backend === 'native_chrome' ? 'nativeBrowser.accountsHint' : 'accounts.list.description') }}</CardDescription>
       </CardHeader>
       <CardContent>
         <div class="space-y-4 md:hidden">
@@ -180,13 +188,16 @@ onMounted(fetchAccounts)
             <div class="space-y-2">
               <div class="flex items-center justify-between gap-3">
                 <h3 class="truncate text-base font-semibold text-slate-900">{{ account.name }}</h3>
-                <Button size="sm" variant="outline" @click="goCreateTask(account.name)">{{ t('accounts.list.createTask') }}</Button>
+                <Button size="sm" variant="outline" @click="goCreateTask(account.profile_directory ? account.path : account.name)">{{ t('accounts.list.createTask') }}</Button>
               </div>
-              <p class="break-all text-sm text-slate-500">{{ account.path }}</p>
+              <p class="break-all text-sm text-slate-500">{{ account.email || account.profile_directory || account.path }}</p>
             </div>
             <div class="mt-4 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" class="flex-1 min-w-[120px]" @click="openEditDialog(account.name)">{{ t('accounts.list.update') }}</Button>
-              <Button size="sm" variant="destructive" class="flex-1 min-w-[120px]" @click="openDeleteDialog(account.name)">{{ t('accounts.list.delete') }}</Button>
+              <Button v-if="account.profile_directory" size="sm" variant="outline" @click="openProfile(account.profile_directory)">{{ t('nativeBrowser.openChrome') }}</Button>
+              <template v-else>
+                <Button size="sm" variant="outline" class="flex-1 min-w-[120px]" @click="openEditDialog(account.name)">{{ t('accounts.list.update') }}</Button>
+                <Button size="sm" variant="destructive" class="flex-1 min-w-[120px]" @click="openDeleteDialog(account.name)">{{ t('accounts.list.delete') }}</Button>
+              </template>
             </div>
           </article>
         </div>
@@ -196,7 +207,7 @@ onMounted(fetchAccounts)
             <TableHeader>
               <TableRow>
                 <TableHead>{{ t('accounts.list.name') }}</TableHead>
-                <TableHead>{{ t('accounts.list.file') }}</TableHead>
+                <TableHead>{{ t(browserStatus?.backend === 'native_chrome' ? 'nativeBrowser.chromeAccount' : 'accounts.list.file') }}</TableHead>
                 <TableHead class="text-right">{{ t('accounts.list.actions') }}</TableHead>
               </TableRow>
             </TableHeader>
@@ -209,12 +220,15 @@ onMounted(fetchAccounts)
               </TableRow>
               <TableRow v-else v-for="account in accounts" :key="account.name">
                 <TableCell class="font-medium">{{ account.name }}</TableCell>
-                <TableCell class="text-sm text-gray-500">{{ account.path }}</TableCell>
+                <TableCell class="text-sm text-gray-500">{{ account.email || account.profile_directory || account.path }}</TableCell>
                 <TableCell class="text-right">
                   <div class="flex justify-end gap-2">
-                    <Button size="sm" variant="outline" @click="goCreateTask(account.name)">{{ t('accounts.list.createTask') }}</Button>
-                    <Button size="sm" variant="outline" @click="openEditDialog(account.name)">{{ t('accounts.list.update') }}</Button>
-                    <Button size="sm" variant="destructive" @click="openDeleteDialog(account.name)">{{ t('accounts.list.delete') }}</Button>
+                    <Button size="sm" variant="outline" @click="goCreateTask(account.profile_directory ? account.path : account.name)">{{ t('accounts.list.createTask') }}</Button>
+                    <Button v-if="account.profile_directory" size="sm" variant="outline" @click="openProfile(account.profile_directory)">{{ t('nativeBrowser.openChrome') }}</Button>
+                    <template v-else>
+                      <Button size="sm" variant="outline" @click="openEditDialog(account.name)">{{ t('accounts.list.update') }}</Button>
+                      <Button size="sm" variant="destructive" @click="openDeleteDialog(account.name)">{{ t('accounts.list.delete') }}</Button>
+                    </template>
                   </div>
                 </TableCell>
               </TableRow>
