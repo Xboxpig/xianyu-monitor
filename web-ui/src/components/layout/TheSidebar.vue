@@ -3,9 +3,12 @@ import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
   LayoutDashboard,
-  ScanSearch,
+  ListTodo,
+  Users,
+  Layers,
+  Terminal,
   Settings2,
-  ChevronRight,
+  ChevronRight
 } from 'lucide-vue-next'
 import { useWebSocket } from '@/composables/useWebSocket'
 import { useI18n } from 'vue-i18n'
@@ -18,13 +21,16 @@ const { t } = useI18n()
 
 const navItems = computed(() => [
   { to: '/dashboard', label: t('sidebar.dashboard'), icon: LayoutDashboard },
-  { to: '/monitor', label: t('sidebar.monitor'), icon: ScanSearch },
-  { to: '/admin', label: t('sidebar.admin'), icon: Settings2 },
+  { to: '/tasks', label: t('sidebar.tasks'), icon: ListTodo },
+  { to: '/accounts', label: t('sidebar.accounts'), icon: Users },
+  { to: '/results', label: t('sidebar.results'), icon: Layers },
+  { to: '/logs', label: t('sidebar.logs'), icon: Terminal },
+  { to: '/settings', label: t('sidebar.settings'), icon: Settings2 },
 ])
 
-const connectionLabel = computed(() =>
+const connectionLabel = computed(() => (
   isConnected.value ? t('sidebar.backendConnected') : t('sidebar.backendConnecting')
-)
+))
 const connectionTone = computed(() =>
   isConnected.value
     ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]'
@@ -39,7 +45,7 @@ const connectionTone = computed(() =>
       :key="item.to"
       :to="item.to"
       v-slot="{ isActive }"
-      class="group relative flex items-center px-4 py-2.5 rounded-xl transition-all duration-200 overflow-hidden"
+      class="group relative flex items-center px-4 py-3 rounded-xl transition-all duration-200 overflow-hidden"
       @click="emit('navigate')"
     >
       <!-- Active Background Effect -->
@@ -49,7 +55,7 @@ const connectionTone = computed(() =>
       ></div>
       <div
         v-if="isActive"
-        class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-primary rounded-r-full"
+        class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full"
       ></div>
 
       <div class="relative z-10 flex items-center w-full">
@@ -72,15 +78,13 @@ const connectionTone = computed(() =>
     </RouterLink>
 
     <!-- Support Section -->
-    <div class="mt-6 px-4">
-      <div class="rounded-2xl p-3.5 bg-secondary/60 border border-dashed border-border">
-        <p class="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-2">
-          {{ t('sidebar.systemStatus') }}
-        </p>
-        <div class="flex items-center gap-2">
-          <div class="w-2 h-2 rounded-full" :class="connectionTone"></div>
-          <span class="text-xs font-bold text-muted-foreground">{{ connectionLabel }}</span>
-        </div>
+    <div class="mt-12 px-4">
+      <div class="rounded-2xl p-4 bg-slate-50/50 border border-slate-100 border-dashed">
+         <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">{{ t('sidebar.systemStatus') }}</p>
+         <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full" :class="connectionTone"></div>
+            <span class="text-xs font-bold text-slate-600">{{ connectionLabel }}</span>
+         </div>
       </div>
     </div>
   </nav>

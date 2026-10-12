@@ -275,46 +275,7 @@ const zhCNExtra = {
       variablesHelp: '可用模板变量：',
     },
   },
-  monitor: {
-    title: '监控',
-    subtitle: '选左侧任务，看右侧商品',
-    newTask: '新建监控任务',
-    searchTask: '搜索任务…',
-    tasksSummary: '共 {count} 个任务 · {running} 个运行中',
-    running: '运行中',
-    idle: '空闲',
-    failed: '失败',
-    resultsUpdated: '更新于 {time}',
-    noTask: '暂无任务',
-    noTaskHint: '点击上方按钮创建第一个监控任务',
-    emptyResults: '该任务还没有结果',
-    allResults: '全部',
-    aiRecommended: 'AI 推荐',
-    keywordRecommended: '关键词命中',
-    runningTasks: '{count} 个运行中',
-    resultsCount: '共 {count} 件',
-  },
-  admin: {
-    title: '管理',
-    subtitle: '账号 · 通知 · 规则 · 日志 · 系统',
-    tabs: {
-      accounts: '账号',
-      notifications: '通知',
-      blacklist: '黑名单',
-      logs: '日志',
-      system: '系统设置',
-    },
-    blacklist: {
-      selectTask: '选择任务',
-      inputPlaceholder: '输入要屏蔽的关键词，回车添加',
-      add: '添加',
-      hint: '支持正则表达式（例：iPhone\\s*13）。命中关键词的商品会被自动隐藏。',
-      empty: '暂无黑名单关键词',
-      saved: '黑名单已保存',
-      saveFailed: '保存黑名单失败',
-      noFile: '该任务还没有结果文件',
-    },
-  },
+
 }
 
 export default zhCNExtra

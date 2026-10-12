@@ -275,46 +275,7 @@ const enUSExtra = {
       variablesHelp: 'Available template variables:',
     },
   },
-  monitor: {
-    title: 'Monitor',
-    subtitle: 'Pick a task on the left to see its results',
-    newTask: 'New monitor task',
-    searchTask: 'Search tasks…',
-    tasksSummary: '{count} tasks · {running} running',
-    running: 'Running',
-    idle: 'Idle',
-    failed: 'Failed',
-    resultsUpdated: 'Updated {time}',
-    noTask: 'No tasks yet',
-    noTaskHint: 'Click the button above to create your first task',
-    emptyResults: 'No results for this task yet',
-    allResults: 'All',
-    aiRecommended: 'AI picks',
-    keywordRecommended: 'Keyword hits',
-    runningTasks: '{count} running',
-    resultsCount: '{count} items',
-  },
-  admin: {
-    title: 'Admin',
-    subtitle: 'Accounts · Notifications · Rules · Logs · System',
-    tabs: {
-      accounts: 'Accounts',
-      notifications: 'Notifications',
-      blacklist: 'Blacklist',
-      logs: 'Logs',
-      system: 'System',
-    },
-    blacklist: {
-      selectTask: 'Select task',
-      inputPlaceholder: 'Enter keywords to block, press Enter to add',
-      add: 'Add',
-      hint: 'Regex supported (e.g. iPhone\\s*13). Matched items are hidden automatically.',
-      empty: 'No blacklist keywords yet',
-      saved: 'Blacklist saved',
-      saveFailed: 'Failed to save blacklist',
-      noFile: 'This task has no result file yet',
-    },
-  },
+
 }
 
 export default enUSExtra

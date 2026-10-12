@@ -5,13 +5,14 @@ import { Button } from '@/components/ui/button'
 import DashboardTaskSearch from '@/components/layout/DashboardTaskSearch.vue'
 import LocaleToggle from '@/components/layout/LocaleToggle.vue'
 import {
-  Zap, 
-  Bell, 
-  Search, 
+  Zap,
+  Bell,
+  Search,
   UserCircle,
   HelpCircle,
   Menu
 } from 'lucide-vue-next'
+import Badge from '@/components/ui/badge/Badge.vue'
 import { useMobileNav } from '@/composables/useMobileNav'
 import { useI18n } from 'vue-i18n'
 
@@ -22,24 +23,17 @@ const inactiveSearchValue = ref('')
 const { t } = useI18n()
 
 const isDashboard = computed(() => route.name === 'Dashboard')
-const greetingKey = computed(() => {
-  const hour = new Date().getHours()
-  if (hour < 6) return 'header.greetingEvening'
-  if (hour < 12) return 'header.greetingMorning'
-  if (hour < 18) return 'header.greetingAfternoon'
-  return 'header.greetingEvening'
-})
 
 function goAccounts() {
-  router.push('/admin?tab=accounts')
+  router.push('/accounts')
 }
 
 function goNotifications() {
-  router.push('/admin?tab=notifications')
+  router.push({ name: 'Settings', query: { tab: 'notifications' } })
 }
 
 function goPrompts() {
-  router.push('/admin?tab=prompts')
+  router.push({ name: 'Settings', query: { tab: 'prompts' } })
 }
 </script>
 
@@ -54,24 +48,21 @@ function goPrompts() {
       <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-lg shadow-primary/20 transition-transform group-hover:rotate-12">
         <Zap class="w-5 h-5 text-white fill-white" />
       </div>
-      <div>
-        <h1 class="text-base font-black text-slate-800 tracking-tight leading-none">
-          {{ t('header.brandTitle') }}
-        </h1>
-        <p class="text-[10px] text-muted-foreground font-medium mt-0.5 hidden sm:block">
-          {{ t('header.brandSub') }}
-        </p>
-      </div>
+      <h1 class="text-lg font-black text-slate-800 tracking-tighter">
+        AI <span class="text-primary">Xianyu</span> Hunter
+      </h1>
+      <Badge variant="outline" class="ml-2 text-[10px] font-bold border-primary/20 text-primary bg-primary/5 uppercase tracking-widest hidden sm:flex">
+        PRO
+      </Badge>
     </RouterLink>
-    <p v-if="isDashboard" class="hidden lg:block text-sm font-bold text-slate-700 ml-2">
-      {{ t(greetingKey) }}
-    </p>
+
+    <!-- Search & Navigation -->
     <div class="hidden md:flex flex-grow max-w-md mx-8">
       <DashboardTaskSearch v-if="isDashboard" />
       <div v-else class="relative w-full group">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 transition-colors" />
-        <input 
-          type="text" 
+        <input
+          type="text"
           v-model="inactiveSearchValue"
           readonly
           aria-disabled="true"
@@ -110,11 +101,11 @@ function goPrompts() {
             <HelpCircle class="w-5 h-5" />
          </Button>
       </div>
-      
+
       <div class="h-6 w-px bg-slate-200 mx-1 hidden sm:block"></div>
 
-      <Button 
-        variant="ghost" 
+      <Button
+        variant="ghost"
         class="hidden sm:flex items-center gap-2 pl-2 pr-4 rounded-full hover:bg-slate-100 transition-all active:scale-95"
         :aria-label="t('header.openAccounts')"
         @click="goAccounts"

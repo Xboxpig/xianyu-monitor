@@ -128,14 +128,14 @@ function openActivity(activity: { filename: string | null; type: string }) {
 </script>
 
 <template>
-  <div class="space-y-5 animate-fade-in">
+  <div class="space-y-8 animate-fade-in">
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-extrabold text-foreground tracking-tight flex items-center gap-3">
-          <LayoutDashboard class="w-7 h-7 text-primary" />
+        <h1 class="text-3xl font-black text-slate-800 tracking-tight flex items-center gap-3">
+          <LayoutDashboard class="w-8 h-8 text-primary" />
           {{ t('dashboard.title') }}
         </h1>
-        <p class="text-muted-foreground mt-1 text-sm font-medium">
+        <p class="text-slate-500 mt-1 font-medium">
           {{ t('dashboard.description') }}
         </p>
       </div>
@@ -148,29 +148,29 @@ function openActivity(activity: { filename: string | null; type: string }) {
     <div v-if="error" class="app-alert-error" role="alert">
       {{ error.message }}
     </div>
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
       <Card
         v-for="stat in statCards"
         :key="stat.label"
         class="app-surface border-none transition-all hover:-translate-y-0.5"
       >
-        <CardContent class="p-5">
+        <CardContent class="p-6">
           <div class="flex items-center justify-between">
             <div>
-              <p class="text-xs font-bold text-muted-foreground uppercase tracking-wider">{{ stat.label }}</p>
-              <h3 class="text-[26px] font-extrabold text-foreground mt-1 font-variant-numeric tabular-nums">{{ stat.value }}</h3>
+              <p class="text-sm font-bold text-slate-400 uppercase tracking-wider">{{ stat.label }}</p>
+              <h3 class="text-2xl font-black text-slate-800 mt-1">{{ stat.value }}</h3>
             </div>
-            <div :class="[stat.bg, 'p-2.5 rounded-xl']">
-              <component :is="stat.icon" :class="['w-5 h-5', stat.color]" />
+            <div :class="[stat.bg, 'p-3 rounded-2xl']">
+              <component :is="stat.icon" :class="['w-6 h-6', stat.color]" />
             </div>
           </div>
-          <div class="mt-3 text-xs font-bold text-muted-foreground">
+          <div class="mt-4 text-xs font-bold text-slate-500">
             {{ stat.detail }}
           </div>
         </CardContent>
       </Card>
     </div>
-    <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
       <Card class="app-surface border-none lg:col-span-2">
         <CardHeader class="flex flex-col gap-4 border-b border-slate-100/60 pb-5 md:flex-row md:items-start md:justify-between">
           <div class="space-y-2">
@@ -238,7 +238,7 @@ function openActivity(activity: { filename: string | null; type: string }) {
           </template>
         </CardContent>
       </Card>
-      <div class="space-y-4">
+      <div class="space-y-8">
         <Card class="app-surface border-none">
           <CardHeader>
             <CardTitle class="text-lg font-bold text-slate-800 flex items-center gap-2">
