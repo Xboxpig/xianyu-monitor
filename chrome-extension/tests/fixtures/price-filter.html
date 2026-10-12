@@ -1,0 +1,57 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- Goofish xy-site 0.0.178: two controlled inputs, ¥ placeholders,
+     integer onChange validation, blur/confirm submission with priceRange. -->
+<div class="search-price-input-container--fixture">
+  <input class="search-price-input--fixture" placeholder="¥">
+  <div class="search-price-input-divider--fixture">-</div>
+  <input class="search-price-input--fixture" placeholder="¥">
+  <button class="search-price-confirm-button--fixture" disabled>确定</button>
+</div>
+<script>
+(() => {
+  window.__xianyuNativeCapture = { sequence: 7, entries: [] };
+  window.priceSubmissions = [];
+  window.priceEvents = [];
+  const inputs = [...document.querySelectorAll('input')];
+  const confirm = document.querySelector('button');
+  const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+  const state = ['', ''];
+  inputs.forEach((input, index) => {
+    let tracked = input.value;
+    // Controlled input frameworks track instance writes; an ordinary .value
+    // assignment followed by input must not update this simulated state.
+    Object.defineProperty(input, 'value', {
+      get() { return native.get.call(this); },
+      set(value) { tracked = String(value); native.set.call(this, value); },
+    });
+    input.addEventListener('input', () => {
+      if (tracked === input.value) return;
+      tracked = input.value;
+      const value = input.value;
+      window.priceEvents.push([index, value]);
+      queueMicrotask(() => {
+        if (/^[1-9]\d*$/.test(value) || value === '') state[index] = value;
+        inputs.forEach((element, i) => { element.value = state[i]; });
+        confirm.disabled = !state[0] && !state[1];
+      });
+    });
+  });
+  confirm.onclick = () => {
+    const range = `priceRange:${state[0] || '0'},${state[1] || 'undefined'};`;
+    window.priceSubmissions.push(range);
+    // The test supplies a response separately to verify stale data is rejected.
+    window.lastPriceRequest = 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search/1.0/?data=' +
+      encodeURIComponent(JSON.stringify({ propValueStr: { searchFilter: range } }));
+  };
+  window.priceResponse = (range, success = true) => {
+    const capture = window.__xianyuNativeCapture;
+    capture.entries.push({
+      sequence: ++capture.sequence,
+      url: range ? 'https://h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search/1.0/?data=' +
+        encodeURIComponent(JSON.stringify({ propValueStr: { searchFilter: range } })) : window.lastPriceRequest,
+      body: { ret: [success ? 'SUCCESS::OK' : 'FAIL_SYS_BUSY'] },
+    });
+  };
+})();
+</script>

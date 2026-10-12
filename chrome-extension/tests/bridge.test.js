@@ -9,7 +9,7 @@ let snapshot = { entries: [], domItems: [{ id: "123", title: "item", price: "10"
 let nextClicks = 0;
 let attention = null;
 let filterResult = { personalApplied: false };
-let version = '2.0.3';
+let version = '2.0.4';
 const originalTimer = globalThis.setTimeout;
 globalThis.setTimeout = () => 1;
 const event = { addListener() {} };
@@ -228,6 +228,31 @@ test('pending publication selection yields between polls and times out without a
   await tick();
   assert.equal(events.filter(event => event[0] === 'resume').length, before);
   attention = null;
+});
+
+test('price submission keeps polling and rejects search data from before the price change', async () => {
+  nextCommand = { run_id: 'price-run', command_id: 'price-command', action: 'search',
+    url: 'https://www.goofish.com/search?q=test', page: 1, task: { min_price: '2500', max_price: '3200' } };
+  storage.nativeState = { runId: nextCommand.run_id, command: nextCommand, lastCommand: nextCommand,
+    phase: 'filters', tabs: { search: 20 }, tabKey: 'search', windowId: 10, startedAt: Date.now() };
+  filterResult = { pending: true, changed: false, error: '页面价格筛选尚未生效。' };
+  await tick();
+  filterResult = { pending: true, changed: true, sequenceFloor: 7, error: '页面价格筛选尚未生效。' };
+  await tick();
+  assert.equal(storage.nativeState.searchSequenceFloor, 7);
+  assert.equal(storage.nativeConnection.online, true);
+  filterResult = { changed: false };
+  await tick();
+  assert.equal(storage.nativeState.phase, 'read');
+  snapshot = { sequence: 7, entries: [{ url: 'idlemtopsearch.pc.search', sequence: 7, body: { data: { resultList: [] } } }] };
+  await tick();
+  assert.equal(storage.nativeState.outbox, undefined);
+  snapshot.sequence = 8;
+  snapshot.entries[0].sequence = 8;
+  await tick();
+  assert.equal(storage.nativeState.outbox.outcome, 'ok');
+  await tick();
+  filterResult = { personalApplied: false };
 });
 
 test.after(() => { globalThis.setTimeout = originalTimer; });

@@ -234,6 +234,75 @@ export async function interactPage(operation, options = {}) {
         return retry("未找到菜单选项。");
       }
     }
+    if ((options.min_price != null && String(options.min_price).trim() !== "" && Number(options.min_price) !== 0) ||
+        (options.max_price != null && String(options.max_price).trim() !== "")) {
+      const retry = error => ({ retry: true, error: "页面价格筛选" + error, changed, sequenceFloor });
+      const pending = () => ({ pending: true, error: "页面价格筛选尚未生效。", changed, sequenceFloor });
+      const amount = value => value == null || String(value).trim() === "" ? "" : String(Number(value));
+      const minimum = amount(options.min_price);
+      const maximum = amount(options.max_price);
+      if ([minimum, maximum].some(value => value !== "" && (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))))) {
+        return retry("只支持非负整数金额。");
+      }
+      if (maximum === "0" || minimum !== "" && maximum !== "" && Number(minimum) > Number(maximum)) {
+        return retry("区间无效，请检查任务价格设置。");
+      }
+      const desired = [minimum === "0" ? "" : minimum, maximum];
+      const signature = JSON.stringify(desired);
+      const container = [...document.querySelectorAll('[class*="search-price-input-container"]')].find(visible);
+      const inputs = container ? [...container.querySelectorAll('input[placeholder="¥"], input[placeholder="￥"]')] : [];
+      const confirm = container?.querySelector('[class*="search-price-confirm-button"]') ||
+        [...(container?.querySelectorAll('button') || [])].find(node => node.textContent.trim() === "确定");
+      if (inputs.length !== 2 || !confirm) return retry("未找到输入框或提交按钮。");
+      let previous = window.__xianyuNativePriceFilter;
+      if (previous?.signature !== signature) previous = null;
+      const valuesMatch = inputs.every((input, index) => input.value === desired[index]);
+      if (previous?.stage === "submitted") {
+        const received = (window.__xianyuNativeCapture?.entries || []).some(entry => {
+          if (!entry.url.includes("idlemtopsearch.pc.search") || entry.sequence <= previous.sequenceFloor ||
+              !entry.body?.ret?.some(value => value.startsWith("SUCCESS"))) return false;
+          try {
+            const data = new URL(entry.url, location.href).searchParams.get("data");
+            if (!data) return true;
+            const request = JSON.parse(data);
+            const properties = typeof request.propValueStr === "string" ? JSON.parse(request.propValueStr) : request.propValueStr;
+            const range = (properties?.searchFilter || "").match(/(?:^|;)priceRange:([^,;]*),([^;]*);/);
+            return !!range && range[1] === (desired[0] || "0") &&
+              range[2] === (desired[1] || "undefined");
+          } catch (_) { return false; }
+        });
+        if (received && valuesMatch) {
+          previous.stage = "applied";
+        } else if (Date.now() - previous.submittedAt < 15000) {
+          return pending();
+        } else {
+          delete window.__xianyuNativePriceFilter;
+          return retry("未收到对应区间的搜索结果。");
+        }
+      }
+      if (previous?.stage !== "applied" || !valuesMatch) {
+        if (previous?.stage === "filled" && valuesMatch && !confirm.disabled) {
+          clickFilter(confirm);
+          window.__xianyuNativePriceFilter = { signature, stage: "submitted", submittedAt: Date.now(), sequenceFloor };
+          return pending();
+        }
+        if (previous?.stage === "filled") {
+          if (Date.now() - previous.filledAt < 15000) return pending();
+          delete window.__xianyuNativePriceFilter;
+          return retry("输入值未被页面接受。");
+        }
+        // Bypass React's instance value tracker and send its normal input event.
+        // Submit on the next worker tick after the controlled state has committed.
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+        inputs.forEach((input, index) => {
+          if (input.value === desired[index]) return;
+          setter.call(input, desired[index]);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        window.__xianyuNativePriceFilter = { signature, stage: "filled", filledAt: Date.now() };
+        return pending();
+      }
+    }
     let regionApplied = false;
     if (options.region) {
       const trigger = exact("区域");
