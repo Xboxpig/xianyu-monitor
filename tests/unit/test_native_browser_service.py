@@ -28,6 +28,30 @@ class Processor:
         self.processed.append((task.id, item.id, seller))
 
 
+class Clock:
+    def __init__(self):
+        self.now = 1000
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+async def ready_poll(service, client):
+    response = await service.poll(client)
+    if response['command'] is None:
+        run = next((r for r in service.processes.values()
+                    if r.client_id == client.client_id and r.collecting and r.returncode is None), None)
+        deadlines = [entry['not_before'] for entry in run.commands.values()
+                     if not entry['issued_at']] if run else []
+        if deadlines:
+            service._clock.advance(max(0, min(deadlines) - service._clock()))
+            response = await service.poll(client)
+    return response
+
+
 def make_service(tmp_path, monkeypatch, payload, **updates):
     monkeypatch.chdir(tmp_path)
     task = Task(id=1, **{**payload, **updates})
@@ -35,7 +59,8 @@ def make_service(tmp_path, monkeypatch, payload, **updates):
     async def find(task_id):
         return task.model_copy(update={"id": task_id})
     processor = Processor()
-    service = NativeBrowserService(repository=SimpleNamespace(find_by_id=find), processor=processor)
+    service = NativeBrowserService(repository=SimpleNamespace(find_by_id=find), processor=processor,
+                                   clock=Clock(), delay_sampler=lambda low, high: low)
     return service, processor
 
 
@@ -54,16 +79,16 @@ def test_collection_lifecycle_and_duplicate_delivery(tmp_path, monkeypatch, samp
         client = BrowserClient(client_id="chrome-client-1")
         await service.poll(client)
         assert await service.start_task(1, "test")
-        search = (await service.poll(client))["command"]
+        search = (await ready_poll(service, client))["command"]
         item = BrowserItem(id="123", title="Sony", price="9000")
         result = report_for(search, items=[item], has_more=False)
         await service.report(result)
-        detail = (await service.poll(client))["command"]
+        detail = (await ready_poll(service, client))["command"]
         assert detail["action"] == "detail"
         assert (await service.report(result))["accepted"] is True
-        assert (await service.poll(client))["command"] == detail
+        assert (await ready_poll(service, client))["command"] == detail
         await service.report(report_for(detail, item=item.model_copy(update={"seller_id": "789"})))
-        seller = (await service.poll(client))["command"]
+        seller = (await ready_poll(service, client))["command"]
         assert seller["action"] == "seller"
         await service.report(report_for(seller, seller={"卖家昵称": "seller"}))
         for _ in range(20):
@@ -90,16 +115,16 @@ def test_login_pause_requires_explicit_resume_and_rejects_foreign_client(tmp_pat
         client = BrowserClient(client_id="chrome-client-1")
         await service.poll(client)
         await service.start_task(1, "test")
-        command = (await service.poll(client))["command"]
+        command = (await ready_poll(service, client))["command"]
         with pytest.raises(PermissionError):
             await service.report(report_for(command, client_id="other-client-1"))
         await service.report(report_for(command, outcome="attention", message="login required"))
         await service.report(report_for(command, outcome="attention", message="login required"))
         assert len(notices) == 1
-        assert (await service.poll(client))["command"] is None
+        assert (await ready_poll(service, client))["command"] is None
         assert service.is_running(1)
         await service.resume(client.client_id, command["run_id"])
-        next_command = (await service.poll(client))["command"]
+        next_command = (await ready_poll(service, client))["command"]
         assert next_command["command_id"] != command["command_id"]
         with pytest.raises(ValueError):
             await service.report(report_for(command))
@@ -137,16 +162,16 @@ def test_queued_tasks_and_pagination_do_not_duplicate_items(tmp_path, monkeypatc
         await service.start_task(1, "one")
         await service.start_task(2, "two")
         assert service.processes[2].issued_at == 0
-        first = (await service.poll(client))["command"]
+        first = (await ready_poll(service, client))["command"]
         item = BrowserItem(id="123", price="100")
         await service.report(report_for(first, items=[item], has_more=True))
-        detail = (await service.poll(client))["command"]
+        detail = (await ready_poll(service, client))["command"]
         await service.report(report_for(detail, item=item))
-        next_page = (await service.poll(client))["command"]
+        next_page = (await ready_poll(service, client))["command"]
         assert next_page["action"] == "search_next" and next_page["page"] == 2
         await service.report(report_for(next_page, items=[item], has_more=True))
         assert service.processes[1].collecting is False
-        assert (await service.poll(client))["command"]["run_id"] == service.processes[2].run_id
+        assert (await ready_poll(service, client))["command"]["run_id"] == service.processes[2].run_id
         await asyncio.sleep(0.01)
         assert [entry[1] for entry in processor.processed] == ["123"]
         await service.stop_all()
@@ -226,9 +251,9 @@ def test_same_keyword_runs_share_inflight_and_recheck_saved_items(tmp_path, monk
         item = BrowserItem(id="123", price="100")
 
         async def collect():
-            search = (await service.poll(client))["command"]
+            search = (await ready_poll(service, client))["command"]
             await service.report(report_for(search, items=[item]))
-            detail = (await service.poll(client))["command"]
+            detail = (await ready_poll(service, client))["command"]
             await service.report(report_for(detail, item=item))
 
         await collect()
@@ -247,47 +272,66 @@ def test_same_keyword_runs_share_inflight_and_recheck_saved_items(tmp_path, monk
     asyncio.run(scenario())
 
 
-def test_parallel_details_overlap_pagination_and_keep_item_ownership(tmp_path, monkeypatch, sample_task_payload):
-    monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '1024')
+@pytest.mark.parametrize('upper_bound', [False, True])
+def test_random_delays_block_items_and_pagination(tmp_path, monkeypatch, sample_task_payload, upper_bound):
     service, processor = make_service(tmp_path, monkeypatch, sample_task_payload, max_pages=2)
+    samples = []
+
+    def sample(low, high):
+        samples.append((low, high))
+        return high if upper_bound else low
+
+    service._delay_sampler = sample
 
     async def scenario():
         client = BrowserClient(client_id='chrome-client-1', parallel=True)
         await service.poll(client)
         await service.start_task(1, 'test')
-        search = (await service.poll(client))['commands'][0]
-        items = [BrowserItem(id=str(i), price='100') for i in range(1, 7)]
+        search = (await service.poll(client))['command']
+        items = [BrowserItem(id='1', seller_id='101'), BrowserItem(id='2')]
         await service.report(report_for(search, items=items + [items[0]], has_more=True))
-        client.windows = [BrowserMemory(run_id=search['run_id'], slot_id='search', memory_mb=256)]
-        response = await service.poll(client)
-        details = [c for c in response['commands'] if c['action'] == 'detail']
-        page = next(c for c in response['commands'] if c['action'] == 'search_next')
-        assert len(details) == 3 and page['page'] == 2
-        assert response['memory_mb'] == 1024
-        # Page two returns before any page-one details. Duplicates remain deduplicated.
+        run = service.processes[1]
+        assert len(run.commands) == 1 and len(run.items) == 1 and run.page == 1
+        assert samples == [(20, 40)]
+        assert '随机等待中' in service.status()['runs'][0]['message']
+        for _ in range(3):
+            assert (await service.poll(client))['commands'] == []
+        assert samples == [(20, 40)]
+        service._clock.advance((40 if upper_bound else 20) - 0.1)
+        assert (await service.poll(client))['command'] is None
+        service._clock.advance(0.1)
+        detail = (await service.poll(client))['command']
+        assert detail['action'] == 'detail' and detail['url'].endswith('=1')
+        service._clock.advance(50)
+        assert (await service.poll(client))['commands'] == [detail]
+        await service.report(report_for(detail, item=items[0]))
+        assert samples == [(20, 40), (5, 15)]
+        assert (await service.poll(client))['commands'] == []
+        assert run.page == 1 and len(run.items) == 1
+        service._clock.advance((15 if upper_bound else 5) - 0.1)
+        assert (await service.poll(client))['command'] is None
+        service._clock.advance(0.1)
+        seller = (await service.poll(client))['command']
+        assert seller['action'] == 'seller'
+        assert (await service.poll(client))['commands'] == [seller]
+        await service.report(report_for(seller, seller={'seller_id': '101'}))
+        assert samples == [(20, 40), (5, 15), (20, 40)]
+        assert (await service.poll(client))['commands'] == []
+        second = (await ready_poll(service, client))['command']
+        assert second['url'].endswith('=2') and run.page == 1
+        await service.report(report_for(second, item=items[1]))
+        page = (await service.poll(client))['command']
+        assert page['action'] == 'search_next' and page['page'] == 2
         await service.report(report_for(page, items=items, has_more=False))
-        for command in reversed(details):
-            item_id = command['url'].split('=')[-1]
-            await service.report(report_for(command, item=BrowserItem(id=item_id, seller_id=str(int(item_id) + 100))))
-        sellers = [c for c in (await service.poll(client))['commands'] if c['action'] == 'seller']
-        assert len(sellers) == 3
-        for command in reversed(sellers):
-            await service.report(report_for(command, seller={'seller_id': command['url'].split('=')[-1]}))
-        await asyncio.sleep(0)
-        assert {item: seller['seller_id'] for _, item, seller in processor.processed} == {'1': '101', '2': '102', '3': '103'}
-        # Remaining candidates can now use released slots. Never lose them on page change.
-        response = await service.poll(client)
-        for command in response['commands']:
-            await service.report(report_for(command, item=BrowserItem(id=command['url'].split('=')[-1])))
-        await service.processes[1].queue.join()
-        assert sorted(item for _, item, _ in processor.processed) == ['1', '2', '3', '4', '5', '6']
+        await run.queue.join()
+        assert processor.processed == [(1, '1', {'seller_id': '101'}), (1, '2', {})]
         await service.stop_all()
 
     asyncio.run(scenario())
 
 
-def test_memory_budget_resizes_without_fixed_concurrency_or_losing_active_work(tmp_path, monkeypatch, sample_task_payload):
-    monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '2048')
+def test_memory_budget_holds_ready_command_without_bursting_items(tmp_path, monkeypatch, sample_task_payload):
+    monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '512')
     service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
 
     async def scenario():
@@ -296,31 +340,28 @@ def test_memory_budget_resizes_without_fixed_concurrency_or_losing_active_work(t
         await service.start_task(1, 'test')
         search = (await service.poll(client))['command']
         await service.report(report_for(search, items=[BrowserItem(id=str(i)) for i in range(1, 31)]))
-        response = await service.poll(client)
-        active = response['commands']
-        assert len(active) == 8  # No fixed three-window limit.
-        client.windows = [BrowserMemory(run_id=c['run_id'], slot_id=c['slot_id'], memory_mb=400) for c in active]
-        monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '512')
-        assert (await service.poll(client))['commands'] == active
-        for command in active:
-            await service.report(report_for(command, item=BrowserItem(id=command['url'].split('=')[-1])))
-        # Windows still exist until the extension closes them; keep their reservation.
+        client.windows = [BrowserMemory(run_id=search['run_id'], slot_id='search', memory_mb=512)]
+        service._clock.advance(20)
         assert (await service.poll(client))['commands'] == []
+        entry = next(iter(service.processes[1].commands.values()))
+        assert entry['issued_at'] == 0
         client.windows = []
-        small = (await service.poll(client))['commands']
-        assert len(small) == 2
+        detail = (await service.poll(client))['command']
+        assert detail['command_id'] == entry['command']['command_id']
         monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '4096')
-        expanded = (await service.poll(client))['commands']
-        assert len(expanded) == 16
-        assert {c['command_id'] for c in small}.issubset({c['command_id'] for c in expanded})
+        assert (await service.poll(client))['commands'] == [detail]
+        await service.report(report_for(detail, item=BrowserItem(id='1')))
+        assert (await service.poll(client))['commands'] == []
+        service._clock.advance(20)
+        second = (await service.poll(client))['command']
+        assert second['url'].endswith('=2')
+        assert len(service.processes[1].items) == 28
         await service.stop_all()
-        with pytest.raises(ValueError):
-            await service.report(report_for(expanded[0]))
 
     asyncio.run(scenario())
 
 
-def test_one_paused_parallel_window_does_not_block_other_items(tmp_path, monkeypatch, sample_task_payload):
+def test_attention_blocks_next_item_and_resume_preserves_active_page(tmp_path, monkeypatch, sample_task_payload):
     service, processor = make_service(tmp_path, monkeypatch, sample_task_payload)
 
     async def scenario():
@@ -329,20 +370,73 @@ def test_one_paused_parallel_window_does_not_block_other_items(tmp_path, monkeyp
         await service.start_task(1, 'test')
         search = (await service.poll(client))['command']
         await service.report(report_for(search, items=[BrowserItem(id='1'), BrowserItem(id='2')]))
-        paused, other = (await service.poll(client))['commands']
+        paused = (await ready_poll(service, client))['command']
         await service.report(report_for(paused, outcome='attention', message='login required'))
+        service._clock.advance(60)
         response = await service.poll(client)
-        assert response['commands'] == [other]
+        assert response['commands'] == []
         assert response['attentions'][0]['command_id'] == paused['command_id']
-        await service.report(report_for(other, item=BrowserItem(id='2')))
+        assert len(service.processes[1].items) == 1
         await service.resume(client.client_id, paused['run_id'], paused['command_id'])
-        resumed = (await service.poll(client))['commands'][0]
+        resumed = (await service.poll(client))['command']
         assert resumed['slot_id'] == paused['slot_id'] and resumed['resume']
         with pytest.raises(ValueError):
             await service.report(report_for(paused))
         await service.report(report_for(resumed, item=BrowserItem(id='1')))
+        assert (await service.poll(client))['commands'] == []
+        second = (await ready_poll(service, client))['command']
+        await service.report(report_for(second, item=BrowserItem(id='2')))
         await service.processes[1].queue.join()
-        assert sorted(i for _, i, _ in processor.processed) == ['1', '2']
+        assert [i for _, i, _ in processor.processed] == ['1', '2']
+        await service.stop_all()
+
+    asyncio.run(scenario())
+
+
+def test_ai_runs_independently_during_browser_delay(tmp_path, monkeypatch, sample_task_payload):
+    service, processor = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def process(*args):
+            started.set()
+            await release.wait()
+
+        processor.process = process
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        search = (await service.poll(client))['command']
+        await service.report(report_for(search, items=[BrowserItem(id='1'), BrowserItem(id='2')]))
+        first = (await ready_poll(service, client))['command']
+        await service.report(report_for(first, item=BrowserItem(id='1')))
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert (await service.poll(client))['command'] is None
+        second = (await ready_poll(service, client))['command']
+        assert second['url'].endswith('=2') and not release.is_set()
+        release.set()
+        await service.stop_all()
+
+    asyncio.run(scenario())
+
+
+def test_stop_cancels_pending_delay(tmp_path, monkeypatch, sample_task_payload):
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        search = (await service.poll(client))['command']
+        await service.report(report_for(search, items=[BrowserItem(id='1')]))
+        deferred = next(iter(service.processes[1].commands.values()))['command']
+        assert (await service.poll(client))['command'] is None
+        assert await service.stop_task(1)
+        service._clock.advance(100)
+        assert (await service.poll(client))['commands'] == []
+        with pytest.raises(ValueError):
+            await service.report(report_for(deferred, item=BrowserItem(id='1')))
         await service.stop_all()
 
     asyncio.run(scenario())

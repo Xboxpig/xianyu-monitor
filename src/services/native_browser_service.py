@@ -2,6 +2,7 @@
 import asyncio
 import contextlib
 import inspect
+import random
 import secrets
 import os
 import tempfile
@@ -60,7 +61,7 @@ class NativeRun:
 class NativeBrowserService:
     backend = "native_chrome"
 
-    def __init__(self, *, repository=None, processor=None, token_path="state/native-browser-token"):
+    def __init__(self, *, repository=None, processor=None, token_path="state/native-browser-token", clock=None, delay_sampler=None):
         self.repository = repository or SqliteTaskRepository()
         self.processor = processor or NativeResultProcessor()
         self.token_path = Path(token_path)
@@ -74,6 +75,8 @@ class NativeBrowserService:
         self._token_lock = threading.Lock()
         self._token = None
         self._inflight = {}
+        self._clock = clock or time.monotonic
+        self._delay_sampler = delay_sampler or random.uniform
 
     def token(self):
         with self._token_lock:
@@ -111,7 +114,7 @@ class NativeBrowserService:
         return task_id in self.processes
 
     def status(self):
-        now = time.monotonic()
+        now = self._clock()
         return {
             "backend": self.backend, "connected": any(now - c["last_seen"] < CLIENT_TIMEOUT for c in self.clients.values()),
             "clients": [{**c["info"], "online": now - c["last_seen"] < CLIENT_TIMEOUT}
@@ -119,7 +122,7 @@ class NativeBrowserService:
             "runs": [{"task_id": r.task.id, "task_name": r.task.task_name,
                       "run_id": r.run_id, "client_id": r.client_id,
                       "state": "attention" if r.waiting else ("collecting" if r.collecting else "analyzing"),
-                      "message": r.waiting, "page": r.page, "pending_analysis": r.queue.qsize(),
+                      "message": r.waiting or self._delay_message(r, now), "page": r.page, "pending_analysis": r.queue.qsize(),
                       "active_windows": len(r.memory), "memory_mb": sum(r.memory.values()),
                       "memory_limit_mb": ScraperSettings().task_memory_mb}
                      for r in self.processes.values()],
@@ -131,7 +134,15 @@ class NativeBrowserService:
         with path.open("a", encoding="utf-8") as source:
             source.write("[" + datetime.now().isoformat(timespec="seconds") + "] " + message + "\n")
 
-    def _issue(self, run, action, url="", *, item=None, market=None, region=None, slot_id=None):
+    def _delay_message(self, run, now):
+        pending = next((e for e in run.commands.values() if not e['issued_at'] and e['not_before'] > now), None)
+        if not pending:
+            return ''
+        seconds = max(1, int(pending['not_before'] - now + 0.999))
+        target = '商品详情' if pending['command']['action'] == 'detail' else '卖家个人主页'
+        return f'随机等待中：{seconds} 秒后打开{target}。'
+
+    def _issue(self, run, action, url="", *, item=None, market=None, region=None, slot_id=None, delay=0):
         command = {
             "run_id": run.run_id, "command_id": secrets.token_hex(16),
             "action": action, "url": url, "page": run.page,
@@ -140,8 +151,11 @@ class NativeBrowserService:
         }
         run.commands[command["command_id"]] = {
             "command": command, "item": item, "market": market or [],
-            "region": region, "issued_at": 0, "waiting": "",
+            "region": region, "issued_at": 0, "waiting": "", "not_before": self._clock() + delay,
         }
+        if delay:
+            target = '商品详情' if action == 'detail' else '卖家个人主页'
+            self._log(run, f'[Chrome] 商品 {item.id}：等待 {delay:.1f} 秒后打开{target}')
         run.command = command
         return command
 
@@ -157,7 +171,7 @@ class NativeBrowserService:
                 raise TaskStartError("TASK_NOT_FOUND", "任务未找到。", 404)
             online = [
                 c["info"] for c in self.clients.values()
-                if time.monotonic() - c["last_seen"] < CLIENT_TIMEOUT
+                if self._clock() - c["last_seen"] < CLIENT_TIMEOUT
             ]
             if task.account_strategy == "fixed":
                 online = [c for c in online if c.get("account_state_file") == task.account_state_file]
@@ -192,7 +206,7 @@ class NativeBrowserService:
             return False
 
     async def poll(self, client: BrowserClient):
-        self.clients[client.client_id] = {"info": client.model_dump(exclude={"windows"}), "last_seen": time.monotonic()}
+        self.clients[client.client_id] = {"info": client.model_dump(exclude={"windows"}), "last_seen": self._clock()}
         run = next((r for r in self.processes.values() if r.client_id == client.client_id and r.collecting and r.returncode is None), None)
         if run is None:
             return {"command": None, "commands": [], "attention": None}
@@ -210,36 +224,19 @@ class NativeBrowserService:
             dispatched = [e for e in run.commands.values() if e["issued_at"]]
             def admit_pending():
                 for entry in sorted(run.commands.values(), key=lambda e: e["command"]["action"].startswith("search_next")):
-                    if entry["issued_at"] or entry["waiting"] or run.queue.full():
+                    if entry["issued_at"] or entry["waiting"] or run.queue.full() or self._clock() < entry['not_before']:
                         continue
                     if not client.parallel and dispatched:
                         continue
                     slot = entry["command"]["slot_id"]
                     if client.parallel and slot not in reserved and sum(reserved.values()) + WINDOW_RESERVATION_MB > budget:
                         continue
-                    entry["issued_at"] = time.monotonic()
+                    entry["issued_at"] = self._clock()
                     reserved.setdefault(slot, WINDOW_RESERVATION_MB)
                     dispatched.append(entry)
-            if client.parallel:
-                # Continue existing windows (seller stage and page turns) before opening more.
-                admit_pending()
-            # Details get the next available slot, while pagination uses its existing window.
-            if not run.queue.full() and (client.parallel or not dispatched):
-                while run.items:
-                    if not client.parallel and any(e["command"]["action"] == "detail" for e in run.commands.values()):
-                        break
-                    if client.parallel and sum(reserved.values()) + WINDOW_RESERVATION_MB > budget:
-                        break
-                    item, market, region = run.items.popleft()
-                    command = self._issue(run, "detail", "https://www.goofish.com/item?id=" + item.id,
-                                          item=item, market=market, region=region)
-                    if client.parallel:
-                        entry = run.commands[command["command_id"]]
-                        entry["issued_at"] = time.monotonic()
-                        reserved[command["slot_id"]] = WINDOW_RESERVATION_MB
-                        dispatched.append(entry)
-                    else:
-                        break
+                    if entry['command']['action'] in ('detail', 'seller'):
+                        target = '商品详情' if entry['command']['action'] == 'detail' else '卖家个人主页'
+                        self._log(run, f'[Chrome] 商品 {entry["item"].id}：开始打开{target}')
             admit_pending()
             commands = [e["command"] for e in dispatched if not e["waiting"]]
             attentions = [{"run_id": run.run_id, "command_id": e["command"]["command_id"], "message": e["waiting"]}
@@ -305,10 +302,7 @@ class NativeBrowserService:
                 run.has_more = report.has_more
                 self._log(run, f"[Chrome] 第 {run.page} 页：{len(candidates)} 件，待采集详情 {len(fresh)} 件（已处理/重复 {len(kept) - len(fresh)} 件）")
                 self._log(run, f"[Chrome] 分页状态：当前 {report.current_page or expected_page} / {report.total_pages or '未知'} 页；下一页控件 {report.next_page_state}；有下一页 {report.has_more}")
-                if run.has_more and run.page < run.task.max_pages:
-                    run.page += 1
-                    self._issue(run, "search_next", self._search_url(run))
-                else:
+                if not run.has_more or run.page >= run.task.max_pages:
                     run.search_done = True
                     reason = f"达到任务页数上限 {run.task.max_pages} 页" if run.page >= run.task.max_pages else f"搜索页面确认第 {run.page} 页为最后一页"
                     self._log(run, "[Chrome] 搜索结束：" + reason)
@@ -324,7 +318,8 @@ class NativeBrowserService:
                     entry["item"] = None
                 elif entry["item"].seller_id:
                     self._issue(run, "seller", "https://www.goofish.com/personal?" + urlencode({"userId": entry["item"].seller_id}),
-                                item=entry["item"], market=entry["market"], region=entry["region"], slot_id=entry["command"]["slot_id"])
+                                item=entry["item"], market=entry["market"], region=entry["region"], slot_id=entry["command"]["slot_id"],
+                                delay=self._delay_sampler(5, 15))
                 else:
                     await self._submit(run, entry, {})
             elif action == "seller":
@@ -354,6 +349,19 @@ class NativeBrowserService:
         entry["item"] = None
 
     async def _advance(self, run):
+        # One browser chain per task: delay -> detail -> delay -> seller -> next item.
+        # Unissued commands retain their sampled deadline across heartbeats and retries.
+        if run.commands:
+            return
+        if run.items:
+            item, market, region = run.items.popleft()
+            self._issue(run, 'detail', 'https://www.goofish.com/item?id=' + item.id,
+                        item=item, market=market, region=region, delay=self._delay_sampler(20, 40))
+            return
+        if not run.search_done and run.has_more and run.page < run.task.max_pages:
+            run.page += 1
+            self._issue(run, 'search_next', self._search_url(run))
+            return
         if run.search_done and not run.items and not run.commands and run.collecting:
             run.collecting = False
             run.command = None
@@ -430,7 +438,7 @@ class NativeBrowserService:
     async def _watch_connections(self):
         while True:
             await asyncio.sleep(10)
-            now = time.monotonic()
+            now = self._clock()
             for run in tuple(self.processes.values()):
                 async with run.lock:
                     if self.processes.get(run.task.id) is not run or run.returncode is not None or not run.collecting:

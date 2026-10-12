@@ -7,7 +7,7 @@ const zhCNExtra = {
   },
   nativeBrowser: {
     memoryLimit: '每个任务的采集内存预算', saveMemory: '保存', memorySaved: '已保存',
-    memoryHelp: '默认 2 GB。详情、卖家与翻页共享预算，空闲额度自动用于并行采集。按页面 JS 内存和窗口预留开销估算，普通 Chrome 无法提供严格的任务进程内存上限。保存后生效；降低预算会暂停新增窗口，已有采集继续完成。',
+    memoryHelp: '默认 2 GB。任务内逐个采集商品：等待 20–40 秒打开详情，再等待 5–15 秒打开卖家主页，当前页完成后翻页。详情、卖家与翻页共享预算。按页面 JS 内存和窗口预留开销估算，普通 Chrome 无法提供严格的任务进程内存上限。保存后生效；降低预算会暂停新增窗口，已有采集继续完成。',
     memoryUsage: '{windows} 个采集窗口 · 估算 {used} / {limit} MB',
     title: 'Chrome 采集',
     description: '使用本机普通 Chrome 和采集扩展，保留当前浏览器的登录状态。',

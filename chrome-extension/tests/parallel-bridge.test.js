@@ -160,3 +160,24 @@ test('a seller with no items completes while a missing nonempty list waits for d
   await tick();
   assert.equal(tabs.size, 0);
 });
+
+test('a backend delay releases the detail window and the seller starts only when dispatched', async () => {
+  activeRun = 'run'; attentions = [];
+  commands = [detail('10')];
+  await tick(); await tick(); await tick();
+  const detailWindow = storage['nativeJob:slot-10'].windowId;
+  await tick();
+  assert.ok(reports.some(r => r.command_id === 'command-10' && r.outcome === 'ok'));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(tabs.size, 0);
+  assert.deepEqual(storage.nativeParallelState.slots, []);
+  commands = [{ ...detail('10'), command_id: 'seller-10', action: 'seller',
+    url: 'https://www.goofish.com/personal?userId=110' }];
+  await tick();
+  assert.notEqual(storage['nativeJob:slot-10'].windowId, detailWindow);
+  assert.equal(tabs.size, 1);
+  assert.equal([...tabs.values()][0].url, commands[0].url);
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(reports.some(r => r.command_id === 'seller-10' && r.outcome === 'ok'));
+  assert.equal(tabs.size, 0);
+});

@@ -7,7 +7,7 @@ const enUSExtra = {
   },
   nativeBrowser: {
     memoryLimit: 'Collection memory budget per task', saveMemory: 'Save', memorySaved: 'Saved',
-    memoryHelp: 'Default: 2 GB. Details, sellers and pagination share the budget. Available memory admits parallel collection. Usage estimates JS heap plus reserved window overhead; ordinary Chrome cannot enforce a strict per-task process memory cap. Changes apply when saved; lowering the budget pauses new windows while existing collection completes.',
+    memoryHelp: 'Default: 2 GB. Items are collected sequentially: wait 20–40 seconds before opening details, then 5–15 seconds before opening the seller profile. Pagination follows collection of the current page. Details, sellers and pagination share the budget. Usage estimates JS heap plus reserved window overhead; ordinary Chrome cannot enforce a strict per-task process memory cap. Changes apply when saved; lowering the budget pauses new windows while existing collection completes.',
     memoryUsage: '{windows} collection windows · estimated {used} / {limit} MB',
     title: 'Chrome Collection',
     description: 'Use ordinary local Chrome and the collector extension with your existing login.',
