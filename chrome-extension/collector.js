@@ -16,6 +16,29 @@ function images(values) {
   }))].slice(0, 30);
 }
 
+export function searchPagination(snapshot, command) {
+  const entry = (snapshot.entries || []).filter(entry => entry.url.includes('idlemtopsearch.pc.search')).at(-1);
+  let requestPage = null;
+  try {
+    const request = JSON.parse(new URL(entry.url, snapshot.href || 'https://www.goofish.com').searchParams.get('data'));
+    requestPage = Number(request?.pageNumber) || null;
+  } catch (_) {}
+  const rawTotal = entry?.body?.data?.resultInfo?.searchResControlFields?.numFound;
+  const total = rawTotal == null || rawTotal === '' ? null : Number(rawTotal);
+  // The public search app uses 30 results per page and caps its page controls at 50.
+  const totalPages = total != null && Number.isFinite(total) && total >= 0 ? Math.min(50, Math.max(1, Math.ceil(total / 30))) : snapshot.totalPages || null;
+  const page = command.page || 1;
+  const currentPage = requestPage || snapshot.currentPage || null;
+  const stale = (requestPage != null && requestPage !== page) || (snapshot.currentPage != null && snapshot.currentPage !== page);
+  const hasMore = snapshot.empty ? false : totalPages != null ? page < totalPages : snapshot.hasMore;
+  // A full response can arrive while React has removed the pagination controls during
+  // loading. Missing controls are unknown, never evidence that this is the last page.
+  const pending = stale || snapshot.searchLoading || (hasMore == null && !snapshot.empty) ||
+    (hasMore === true && snapshot.nextPageState && snapshot.nextPageState !== 'enabled');
+  return { pending, has_more: hasMore ?? false, current_page: currentPage,
+    total_pages: totalPages, next_page_state: snapshot.nextPageState || 'unknown' };
+}
+
 export function parseSearch(body) {
   return (body?.data?.resultList || []).flatMap(entry => {
     const main = entry?.data?.item?.main;
@@ -111,6 +134,8 @@ export function readPage(action) {
     const activePage = document.querySelector('[class*="search-pagination-page-box-active"], .ant-pagination-item-active, [aria-current="page"]');
     state.currentPage = Number(activePage?.textContent.trim()) ||
       Number(document.querySelector('[class*="search-page-tiny-page"]')?.textContent.split('/')[0].trim()) || null;
+    state.totalPages = Number(document.querySelector('[class*="search-page-tiny-page"]')?.textContent.split('/')[1]?.trim()) || null;
+    state.searchLoading = [...document.querySelectorAll('[class*="loading-container--"]')].some(visible);
     state.domItems = [...document.querySelectorAll('a[href*="/item?"]')].flatMap(link => {
       let url;
       try { url = new URL(link.href); } catch (_) { return []; }
@@ -133,7 +158,8 @@ export function readPage(action) {
     const next = document.querySelector('[class*="search-pagination-arrow-right"], [class*="search-page-tiny-arrow-right"]')?.closest('button') ||
       document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') ||
       [...document.querySelectorAll('button, a, li')].find(element => element.textContent.trim() === "下一页");
-    state.hasMore = !!next && !next.hasAttribute("disabled") && next.getAttribute("aria-disabled") !== "true" && !/disabled/.test(next.className);
+    state.hasMore = next ? !next.hasAttribute("disabled") && next.getAttribute("aria-disabled") !== "true" && !/disabled/.test(next.className) : null;
+    state.nextPageState = !next ? 'missing' : state.hasMore ? 'enabled' : 'disabled';
     state.empty = /暂无搜索结果|没有找到相关|没有找到符合|暂无商品/.test(content);
   } else if (action === "detail") {
     const id = new URL(location.href).searchParams.get("id") || "";
@@ -175,7 +201,8 @@ export async function interactPage(operation, options = {}) {
   if (operation === "next") {
     const next = document.querySelector('[class*="search-pagination-arrow-right"], [class*="search-page-tiny-arrow-right"]')?.closest('button') ||
       document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') || exact("下一页");
-    if (!next || next.hasAttribute("disabled") || next.getAttribute("aria-disabled") === "true" || /disabled/.test(next.className)) return { clicked: false };
+    if (!next) return { clicked: false, reason: 'missing' };
+    if (next.hasAttribute("disabled") || next.getAttribute("aria-disabled") === "true" || /disabled/.test(next.className)) return { clicked: false, reason: 'disabled' };
     if (window.__xianyuNativeCapture) window.__xianyuNativeCapture.entries = [];
     next.click();
     return { clicked: true, sequenceFloor };
@@ -351,7 +378,10 @@ export function collectSnapshot(snapshot, command) {
     if (body && Array.isArray(body.ret) && body.ret.some(value => !value.startsWith("SUCCESS"))) {
       return { outcome: "attention", message: "搜索请求未成功：" + body.ret.join("；").slice(0, 1000) };
     }
-    return { outcome: "ok", items, has_more: snapshot.hasMore, personal_applied: command.task?.personal_only ? snapshot.personalApplied : false };
+    const responseEmpty = Array.isArray(body?.data?.resultList) && body.data.resultList.length === 0;
+    const { pending, ...pagination } = searchPagination({ ...snapshot, empty: body ? responseEmpty : snapshot.empty }, command);
+    if (pending) return null;
+    return { outcome: "ok", items, ...pagination, personal_applied: command.task?.personal_only ? snapshot.personalApplied : false };
   }
   if (command.action === "detail") {
     const id = new URL(command.url).searchParams.get("id");

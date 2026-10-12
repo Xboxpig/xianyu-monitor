@@ -1,0 +1,25 @@
+<!doctype html><html><body>
+<div id="results"></div><div id="pagination"></div>
+<script>
+window.__xianyuNativeCapture = { entries: [], sequence: 0 };
+window.current = 1;
+window.turns = [];
+window.response = page => {
+  window.current = page;
+  document.getElementById('pagination').replaceChildren();
+  const url = 'https://example.com/idlemtopsearch.pc.search?data=' + encodeURIComponent(JSON.stringify({ pageNumber: page, rowsPerPage: 30 }));
+  const resultList = Array.from({length: 30}, (_, index) => ({ data: { item: { main: { exContent: {
+    itemId: String(page * 100 + index), title: '商品 ' + page + '-' + index, price: '100',
+  } } } } }));
+  window.__xianyuNativeCapture.entries.push({ url, sequence: ++window.__xianyuNativeCapture.sequence,
+    body: { ret: ['SUCCESS'], data: { resultList, resultInfo: { searchResControlFields: { numFound: 240 } } } } });
+};
+window.mount = () => {
+  document.getElementById('pagination').innerHTML = `
+    <span class="search-page-tiny-page--fixture">${window.current}/8</span>
+    <div class="search-pagination-page-box--fixture search-pagination-page-box-active--fixture">${window.current}</div>
+    <button id="next" ${window.current === 8 ? 'disabled' : ''}><div class="search-pagination-arrow-right--fixture"></div></button>`;
+  document.getElementById('next').onclick = () => { window.turns.push(window.current + 1); window.response(window.current + 1); };
+};
+window.response(1);
+</script></body></html>

@@ -180,6 +180,7 @@ class NativeBrowserService:
             if self._watchdog is None:
                 self._watchdog = asyncio.create_task(self._watch_connections())
             self._log(run, "[Chrome] 任务已排队，使用浏览器：" + client["name"])
+            self._log(run, f"[Chrome] 搜索页数上限：{task.max_pages} 页；扩展版本：{client.get('version', 'unknown')}")
             return True
         except TaskStartError:
             if raise_on_failure:
@@ -282,6 +283,9 @@ class NativeBrowserService:
                 return {"accepted": True}
             action = entry["command"]["action"]
             if action in ("search", "search_next"):
+                expected_page = entry['command']['page']
+                if report.current_page is not None and report.current_page != expected_page:
+                    raise ValueError(f"Search page mismatch: expected {expected_page}, received {report.current_page}.")
                 run.personal_applied = report.personal_applied
                 run.region_applied = report.region_applied
                 candidates = report.items
@@ -300,11 +304,14 @@ class NativeBrowserService:
                 run.items.extend((i, list(kept), report.region_applied) for i in fresh)
                 run.has_more = report.has_more
                 self._log(run, f"[Chrome] 第 {run.page} 页：{len(candidates)} 件，待采集详情 {len(fresh)} 件（已处理/重复 {len(kept) - len(fresh)} 件）")
+                self._log(run, f"[Chrome] 分页状态：当前 {report.current_page or expected_page} / {report.total_pages or '未知'} 页；下一页控件 {report.next_page_state}；有下一页 {report.has_more}")
                 if run.has_more and run.page < run.task.max_pages:
                     run.page += 1
                     self._issue(run, "search_next", self._search_url(run))
                 else:
                     run.search_done = True
+                    reason = f"达到任务页数上限 {run.task.max_pages} 页" if run.page >= run.task.max_pages else f"搜索页面确认第 {run.page} 页为最后一页"
+                    self._log(run, "[Chrome] 搜索结束：" + reason)
             elif action == "detail":
                 if not report.item or report.item.id != entry["item"].id:
                     raise ValueError("Item ID does not match the requested detail page.")

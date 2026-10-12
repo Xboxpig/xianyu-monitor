@@ -60,7 +60,8 @@ async function execute(tabId, func, args) {
 
 export function pageCheckpoint(snapshot) {
   return JSON.stringify([snapshot.href, snapshot.sequence || 0, !!snapshot.attention,
-    snapshot.currentPage, snapshot.domItems?.length, snapshot.domItem?.id, snapshot.empty]);
+    snapshot.currentPage, snapshot.domItems?.length, snapshot.domItem?.id, snapshot.empty,
+    snapshot.nextPageState, snapshot.totalPages, snapshot.searchLoading]);
 }
 
 async function resumeWhenReady(state, attention) {
@@ -197,7 +198,12 @@ async function collectStep(state) {
       await save(state);
       const clicked = await execute(tabId, interactPage, ["next"]);
       if (!clicked?.clicked) {
-        await queueReport(state, { outcome: "ok", items: [], has_more: false });
+        // React may temporarily unmount or disable the control during a search update.
+        // Retry on later ticks instead of falsely reporting an empty last page.
+        state.phase = 'load';
+        if (Date.now() - state.startedAt > 120000) {
+          await queueReport(state, { outcome: 'attention', message: `第 ${command.page} 页翻页控件未就绪（${clicked?.reason || 'unknown'}），页面恢复后将自动继续。` });
+        } else await save(state);
         return;
       }
       state.searchSequenceFloor = clicked.sequenceFloor;
@@ -285,7 +291,8 @@ async function collectStep(state) {
       region_applied: state.regionApplied || false,
     });
   } else if (Date.now() - state.startedAt > 120000) {
-    await queueReport(state, { outcome: "attention", message: "未读取到页面数据。请检查登录状态和页面内容，数据恢复后将自动继续；商品不存在时请停止任务。" });
+    const paginationMessage = command.action.startsWith('search') ? `第 ${command.page} 页数据或分页状态未就绪（下一页控件：${snapshot.nextPageState || 'unknown'}）。` : '';
+    await queueReport(state, { outcome: "attention", message: paginationMessage + "未读取到页面数据。请检查登录状态和页面内容，数据恢复后将自动继续；商品不存在时请停止任务。" });
   } else {
     await save(state);
   }

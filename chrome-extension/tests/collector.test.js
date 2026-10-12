@@ -3,6 +3,45 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseSearch, parseDetail, parseSeller, collectSnapshot, readPage, interactPage } from "../collector.js";
 
+function pageSnapshot(page, count, state = 'enabled') {
+  const fixture = JSON.parse(readFileSync(new URL('../../tests/fixtures/search_results.json', import.meta.url)));
+  fixture.data.resultInfo = { searchResControlFields: { numFound: count } };
+  return { href: 'https://www.goofish.com/search?q=test', currentPage: page,
+    nextPageState: state, hasMore: state === 'missing' ? null : state === 'enabled',
+    entries: [{ url: 'https://example.com/idlemtopsearch.pc.search?data=' + encodeURIComponent(JSON.stringify({ pageNumber: page })), body: fixture }] };
+}
+
+test('search responses wait for pagination to mount instead of ending after page one', () => {
+  const command = { action: 'search', page: 1, task: {} };
+  assert.equal(collectSnapshot(pageSnapshot(1, 240, 'missing'), command), null);
+  assert.equal(collectSnapshot(pageSnapshot(1, 240, 'disabled'), command), null);
+  const ready = collectSnapshot(pageSnapshot(1, 240), command);
+  assert.equal(ready.has_more, true);
+  assert.equal(ready.total_pages, 8);
+  assert.equal(ready.current_page, 1);
+});
+
+test('missing pagination without a result total stays unknown, while a confirmed last page ends', () => {
+  const unknown = pageSnapshot(1, 240, 'missing');
+  delete unknown.entries[0].body.data.resultInfo;
+  assert.equal(collectSnapshot(unknown, { action: 'search', page: 1 }), null);
+  const last = collectSnapshot(pageSnapshot(8, 240, 'disabled'), { action: 'search_next', page: 8 });
+  assert.equal(last.has_more, false);
+  assert.equal(last.current_page, 8);
+  const single = collectSnapshot(pageSnapshot(1, 20, 'missing'), { action: 'search', page: 1 });
+  assert.equal(single.has_more, false);
+});
+
+test('optimistic page indicators cannot relabel an older search response as the next page', () => {
+  const stale = pageSnapshot(1, 240);
+  stale.currentPage = 2;
+  assert.equal(collectSnapshot(stale, { action: 'search_next', page: 2 }), null);
+  const loading = pageSnapshot(2, 240);
+  loading.searchLoading = true;
+  assert.equal(collectSnapshot(loading, { action: 'search_next', page: 2 }), null);
+  assert.equal(collectSnapshot(pageSnapshot(2, 240), { action: 'search_next', page: 2 }).current_page, 2);
+});
+
 test("search response preserves price, tags, seller and publication time", () => {
   const fixture = JSON.parse(readFileSync(new URL("../../tests/fixtures/search_results.json", import.meta.url)));
   const [item] = parseSearch(fixture);

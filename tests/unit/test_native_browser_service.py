@@ -346,3 +346,26 @@ def test_one_paused_parallel_window_does_not_block_other_items(tmp_path, monkeyp
         await service.stop_all()
 
     asyncio.run(scenario())
+
+
+def test_search_obeys_eight_page_limit_and_rejects_relabelled_responses(tmp_path, monkeypatch, sample_task_payload):
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload, max_pages=8)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        run = service.processes[1]
+        for page in range(1, 9):
+            command = next(c for c in (await service.poll(client))['commands'] if c['action'].startswith('search'))
+            assert command['page'] == page
+            if page == 2:
+                with pytest.raises(ValueError, match='Search page mismatch'):
+                    await service.report(report_for(command, current_page=1, has_more=True))
+                assert command['command_id'] in run.commands
+            await service.report(report_for(command, current_page=page, total_pages=50, next_page_state='enabled', has_more=True))
+        assert run.search_done and not run.collecting
+        assert not run.commands
+        await service.stop_all()
+
+    asyncio.run(scenario())

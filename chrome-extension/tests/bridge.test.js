@@ -7,6 +7,7 @@ let nextCommand = null;
 let failReport = false;
 let snapshot = { entries: [], domItems: [{ id: "123", title: "item", price: "10" }], hasMore: false };
 let nextClicks = 0;
+let nextMissing = false;
 let attention = null;
 let filterResult = { personalApplied: false };
 let version = '2.0.4';
@@ -32,6 +33,7 @@ globalThis.chrome = {
   scripting: { async executeScript(options) {
     if (options.func.name === "readPage") return [{ result: snapshot }];
     if (options.args[0] === "next") {
+      if (nextMissing) return [{ result: { clicked: false, reason: 'missing' } }];
       nextClicks++;
       snapshot = { ...snapshot, currentPage: 2, sequence: 1,
         entries: [{ url: "idlemtopsearch.pc.search", sequence: 1,
@@ -123,7 +125,7 @@ test('waiting task resumes only after a verified page has new usable data', asyn
     url: 'https://www.goofish.com/search?q=test', page: 1, task: {} };
   nextCommand = null;
   attention = { run_id: command.run_id, message: '请检查页面' };
-  snapshot = { href: command.url, sequence: 1, ready: true, entries: [], domItems: [{ id: '123', title: 'item', price: '10' }] };
+  snapshot = { href: command.url, sequence: 1, ready: true, entries: [], hasMore: false, domItems: [{ id: '123', title: 'item', price: '10' }] };
   storage.nativeState = { runId: command.run_id, lastCommand: command, command: null, phase: 'read',
     tabs: { search: 20 }, tabKey: 'search', windowId: 10, attentionCheckpoint: pageCheckpoint(snapshot) };
   const before = events.filter(event => event[0] === 'resume').length;
@@ -187,7 +189,7 @@ test('updating the extension resumes a filter pause without asking the user to c
     url: 'https://www.goofish.com/search?q=test', page: 1, task: { new_publish_option: '最新' } };
   nextCommand = null;
   attention = { run_id: command.run_id, message: '请在搜索页面设置发布时间筛选：最新，然后点击继续。' };
-  snapshot = { href: command.url, sequence: 1, ready: true, entries: [], domItems: [{ id: '123', title: 'item', price: '10' }] };
+  snapshot = { href: command.url, sequence: 1, ready: true, entries: [], hasMore: false, domItems: [{ id: '123', title: 'item', price: '10' }] };
   storage.nativeState = { runId: command.run_id, lastCommand: command, command: null, phase: 'filters',
     collectorVersion: '2.0.0', filterAttempts: 4, tabs: { search: 20 }, tabKey: 'search', windowId: 10,
     attentionCheckpoint: pageCheckpoint(snapshot) };
@@ -256,3 +258,20 @@ test('price submission keeps polling and rejects search data from before the pri
 });
 
 test.after(() => { globalThis.setTimeout = originalTimer; });
+
+test('missing next controls are retried without reporting an empty last page', async () => {
+  nextCommand = { run_id: 'delayed-pagination-run', command_id: 'delayed-page', action: 'search_next',
+    url: 'https://www.goofish.com/search?q=test', page: 2, task: {} };
+  storage.nativeState = { runId: nextCommand.run_id, clientId: 'chrome-client-1', command: nextCommand, lastCommand: nextCommand,
+    phase: 'load', searchPage: 1, tabs: { search: 20 }, tabKey: 'search', windowId: 10, startedAt: Date.now() };
+  snapshot = { sequence: 1, currentPage: 1, entries: [], nextPageState: 'missing', hasMore: null };
+  nextMissing = true;
+  await tick(); await tick();
+  assert.equal(storage.nativeState.phase, 'load');
+  assert.equal(storage.nativeState.outbox, undefined);
+  nextMissing = false;
+  await tick(); await tick(); await tick();
+  assert.equal(storage.nativeState.outbox.current_page, 2);
+  assert.equal(storage.nativeState.outbox.outcome, 'ok');
+  await tick();
+});

@@ -127,3 +127,30 @@ def test_actual_goofish_pagination_structure_turns_and_stops_at_disabled_last_pa
         assert page.evaluate('window.clicks') == 1
     finally:
         page.close()
+
+
+def test_eight_pages_survive_response_before_pagination_render(chrome_browser):
+    repo = Path(__file__).resolve().parents[2]
+    source = (repo / 'chrome-extension/collector.js').read_text(encoding='utf-8').replace('export ', '')
+    collect = 'command => { ' + source + '; return collectSnapshot(readPage(command.action), command); }'
+    advance = 'async () => { ' + source + '; return await interactPage("next"); }'
+    page = chrome_browser.new_page()
+    try:
+        page.set_content((repo / 'chrome-extension/tests/fixtures/delayed-pagination.html').read_text(encoding='utf-8'))
+        collected = []
+        for number in range(1, 9):
+            command = {'action': 'search' if number == 1 else 'search_next', 'page': number, 'task': {}}
+            if number < 8:
+                assert page.evaluate(collect, command) is None, 'response arrived but pagination is still unmounted'
+            else:
+                assert not page.evaluate(collect, command)['has_more'], 'response total can confirm the final page'
+            page.evaluate('window.mount()')
+            result = page.evaluate(collect, command)
+            assert result['current_page'] == number and result['total_pages'] == 8
+            assert result['has_more'] == (number < 8)
+            collected.extend(item['id'] for item in result['items'])
+            assert page.evaluate(advance)['clicked'] == (number < 8)
+        assert len(set(collected)) == 240
+        assert page.evaluate('window.turns') == list(range(2, 9))
+    finally:
+        page.close()

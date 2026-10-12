@@ -73,6 +73,9 @@ class BrowserReport(BaseModel):
     item: BrowserItem | None = None
     seller: dict = Field(default_factory=dict)
     has_more: bool = False
+    current_page: int | None = Field(default=None, ge=1, le=10000)
+    total_pages: int | None = Field(default=None, ge=1, le=10000)
+    next_page_state: Literal['enabled', 'disabled', 'missing', 'unknown'] = 'unknown'
     region_applied: bool = False
     personal_applied: bool = False
 
