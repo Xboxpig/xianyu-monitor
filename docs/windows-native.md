@@ -20,6 +20,12 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1 -Setup
 
 已有环境时运行 `.\start-windows.ps1`。前端代码更新后运行 `.\start-windows.ps1 -Build`。可用 `-Port 8001` 更换端口、`-NoBrowser` 只启动后端。服务监听 `127.0.0.1`；保持终端运行，Ctrl+C 停止服务。
 
+## 数据持久化
+
+任务、采集结果和价格历史保存在 `data/app.sqlite3`。Windows 启动入口读取 `.env` 中的 `APP_DATABASE_FILE`，将路径固定为绝对路径并传给后端；默认使用项目根目录下的 `data/app.sqlite3`，重启或更新源码继续使用该数据库。
+
+从 DSM 迁移时，先通过 SQLite online backup 生成包含已提交 WAL 数据的一致快照，验证完整性后替换本机数据库，并复制任务引用的 `prompts` 文件。替换前保留本机旧库，迁移快照及清单保存在 `data/backups`。迁移后的运行状态重置为停止；Cron、账号绑定和筛选条件保持原值。
+
 ## 安装并配对扩展
 
 1. Chrome 打开 `chrome://extensions`，开启开发者模式，点击“加载已解压的扩展程序”，选择项目的 `chrome-extension` 文件夹。已有旧扩展时点击重新加载。

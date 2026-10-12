@@ -32,6 +32,9 @@ if ($Setup) {
     if (-not (Test-Path -LiteralPath '.env')) { Copy-Item -LiteralPath '.env.example' -Destination '.env' }
     if (-not (Test-Path -LiteralPath 'config.json')) { Copy-Item -LiteralPath 'config.json.example' -Destination 'config.json' }
 }
+$databasePath = & $pythonExe -c "from dotenv import load_dotenv; from pathlib import Path; import os; load_dotenv('.env', override=False); print(Path(os.getenv('APP_DATABASE_FILE', 'data/app.sqlite3')).resolve())"
+if ($LASTEXITCODE -ne 0) { throw 'Failed to resolve the application database path.' }
+$env:APP_DATABASE_FILE = $databasePath.Trim()
 if ($Build -or -not (Test-Path -LiteralPath 'dist\index.html')) {
     if (-not (Test-Path -LiteralPath 'web-ui\node_modules')) {
         # Check routing before using a domestic npm mirror.
@@ -54,5 +57,6 @@ if (-not $NoBrowser) {
     Start-Process -FilePath $pythonExe -ArgumentList @('-m', 'src.services.native_chrome_launcher', '--wait-url', "http://127.0.0.1:$Port/settings?tab=browser") -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
 }
 Write-Host "Native Chrome backend: http://127.0.0.1:$Port"
+Write-Host "Database: $env:APP_DATABASE_FILE"
 Write-Host 'Keep this terminal running. Press Ctrl+C to stop the backend and its tasks.'
 Invoke-Checked $pythonExe @('-m', 'uvicorn', 'src.app:app', '--host', '127.0.0.1', '--port', "$Port")
