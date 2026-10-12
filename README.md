@@ -4,6 +4,8 @@
 
 私人闲鱼监控系统，提供完整的 Web 管理界面。
 
+Windows 可运行 `.\start-windows.ps1 -Setup`，使用普通 Chrome 和采集扩展。首次安装、配对与账号配置见 [Windows 原生运行说明](docs/windows-native.md)。
+
 
 ## 核心特性
 

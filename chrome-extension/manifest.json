@@ -1,24 +1,37 @@
 {
   "manifest_version": 3,
-  "name": "Xianyu Login State Extractor",
-  "version": "1.1",
-  "description": "Extract login state and browser environment for Xianyu monitoring robot",
+  "name": "Xianyu Native Chrome Collector",
+  "version": "2.0.0",
+  "minimum_chrome_version": "120",
+  "description": "Collect Xianyu pages using your logged-in Chrome profile",
   "permissions": [
     "activeTab",
     "cookies",
     "scripting",
     "storage",
     "tabs",
-    "webRequest"
+    "webRequest",
+    "alarms"
   ],
   "host_permissions": [
-    "*://*.goofish.com/*"
+    "*://*.goofish.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "http://[::1]/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
+  "content_scripts": [{
+    "matches": ["https://www.goofish.com/*"],
+    "js": ["page-observer.js"],
+    "run_at": "document_start",
+    "world": "MAIN"
+  }],
+  "options_page": "options.html",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Extract Xianyu Login State"
+    "default_title": "闲鱼 Chrome 采集"
   }
 }

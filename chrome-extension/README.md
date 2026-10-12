@@ -1,4 +1,8 @@
-# Xianyu Login State Extractor Chrome Extension
+# Xianyu Native Chrome Collector
+
+Windows 采集扩展的启动、配对和任务操作见 [Windows 原生运行说明](../docs/windows-native.md)。在扩展的“采集连接设置”填写本机服务地址和配对令牌，并在当前 Chrome profile 登录闲鱼，即可接收后台采集任务。
+
+The extension uses ordinary Chrome tabs for collection. Login-state export remains available under the popup's expandable section.
 
 This Chrome extension helps extract complete login state information from Xianyu (Goofish) for use with the monitoring robot. It also records browser environment hints and request headers to better mimic a real session.
 

@@ -1,0 +1,9 @@
+body { margin: 0; background: #f8fafc; color: #1e293b; font: 14px/1.6 system-ui, sans-serif; }
+main { max-width: 600px; margin: 40px auto; padding: 28px; background: white; border: 1px solid #e2e8f0; border-radius: 16px; }
+h1 { font-size: 24px; }
+label { display: block; margin-top: 18px; font-weight: 600; }
+input:not([type=checkbox]) { display: block; box-sizing: border-box; width: 100%; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; }
+p { color: #64748b; }
+.toggle { display: flex; align-items: center; gap: 8px; }
+button { margin-top: 20px; border: 0; border-radius: 8px; padding: 10px 20px; background: #3b82f6; color: white; cursor: pointer; }
+#status { color: #1d4ed8; white-space: pre-wrap; }

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.routes import (
     dashboard,
@@ -17,6 +18,7 @@ from src.api.routes import (
     login_state,
     websocket,
     accounts,
+    browser,
 )
 from src.api.dependencies import (
     set_process_service,
@@ -31,11 +33,17 @@ from src.services.task_generation_service import TaskGenerationService
 from src.services.ai_recovery_service import ai_recovery_service
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
-from src.infrastructure.config.settings import settings as app_settings
+from src.infrastructure.config.settings import settings as app_settings, scraper_settings
 
 
 # 全局服务实例
-process_service = ProcessService()
+if scraper_settings.backend == "native_chrome":
+    from src.services.native_browser_service import NativeBrowserService
+    process_service = NativeBrowserService()
+elif scraper_settings.backend == "playwright":
+    process_service = ProcessService()
+else:
+    raise ValueError("SCRAPER_BACKEND must be native_chrome or playwright")
 scheduler_service = SchedulerService(process_service)
 task_generation_service = TaskGenerationService()
 
@@ -103,6 +111,13 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan
 )
+if scraper_settings.backend == "native_chrome":
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"chrome-extension://[a-p]{32}",
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "X-Xianyu-Token"],
+    )
 
 # 注册路由
 app.include_router(tasks.router)
@@ -114,6 +129,7 @@ app.include_router(results.router)
 app.include_router(login_state.router)
 app.include_router(websocket.router)
 app.include_router(accounts.router)
+app.include_router(browser.router)
 
 # 挂载静态文件
 # 旧的静态文件目录（用于截图等）

@@ -1,0 +1,13 @@
+python-dotenv
+requests
+openai
+fastapi
+uvicorn[standard]
+pydantic-settings
+jinja2
+aiofiles
+python-socks
+apscheduler
+httpx[socks]
+Pillow
+tzdata

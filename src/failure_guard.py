@@ -92,6 +92,15 @@ class _FileLock:
         self._fh = fh
 
     def __enter__(self):
+        if os.name == "nt":
+            import msvcrt
+            self._fh.seek(0)
+            if not self._fh.read(1):
+                self._fh.write(" ")
+                self._fh.flush()
+            self._fh.seek(0)
+            msvcrt.locking(self._fh.fileno(), msvcrt.LK_LOCK, 1)
+            return self
         try:
             import fcntl
 
@@ -101,6 +110,11 @@ class _FileLock:
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        if os.name == "nt":
+            import msvcrt
+            self._fh.seek(0)
+            msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+            return False
         try:
             import fcntl
 

@@ -1,4 +1,17 @@
 const enUSExtra = {
+  nativeBrowser: {
+    title: 'Chrome Collection',
+    description: 'Use ordinary local Chrome and the collector extension with your existing login.',
+    requiresNative: 'Start with start-windows.ps1 or set SCRAPER_BACKEND=native_chrome.',
+    connected: 'Chrome extension connected', disconnected: 'Waiting for Chrome extension',
+    install: 'Open chrome://extensions, enable Developer mode and load the project chrome-extension folder.',
+    pair: 'Get a pairing token here, enter it in the extension settings and enable the connection.',
+    login: 'Log in to Goofish in the selected Chrome profile, then start a task. Click Resume in the extension after verification.',
+    password: 'Administrator password', showToken: 'Get pairing token', openChrome: 'Open Chrome',
+    token: 'Pairing token (click to select all)', hideToken: 'Hide token',
+    online: 'Online', offline: 'Offline', page: 'Page {page}',
+    collecting: 'Collecting pages', analyzing: 'Collection finished; processing AI analysis',
+  },
   tasks: {
     title: 'Tasks',
     toasts: {

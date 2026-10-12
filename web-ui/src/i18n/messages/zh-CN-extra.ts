@@ -1,4 +1,17 @@
 const zhCNExtra = {
+  nativeBrowser: {
+    title: 'Chrome 采集',
+    description: '使用本机普通 Chrome 和采集扩展，保留当前浏览器的登录状态。',
+    requiresNative: '请使用 start-windows.ps1 启动 Windows 版，或设置 SCRAPER_BACKEND=native_chrome。',
+    connected: 'Chrome 扩展已连接', disconnected: '等待 Chrome 扩展连接',
+    install: '打开 chrome://extensions，启用开发者模式，加载项目中的 chrome-extension 文件夹。',
+    pair: '在此获取配对令牌，填写到扩展的采集连接设置中，并启用后台连接。',
+    login: '在对应 Chrome profile 中登录闲鱼，再启动监控任务。遇到验证时在扩展中点击继续。',
+    password: '管理员密码', showToken: '获取配对令牌', openChrome: '打开 Chrome',
+    token: '配对令牌（点击输入框可全选）', hideToken: '隐藏令牌',
+    online: '在线', offline: '离线', page: '第 {page} 页',
+    collecting: '正在采集页面', analyzing: '采集完成，正在处理 AI 分析',
+  },
   tasks: {
     title: '任务管理',
     toasts: {

@@ -16,6 +16,7 @@ import { toast } from '@/components/ui/toast'
 import { getPromptContent, listPrompts, updatePrompt } from '@/api/prompts'
 import NotificationSettingsPanel from '@/components/settings/NotificationSettingsPanel.vue'
 import RotationSettingsPanel from '@/components/settings/RotationSettingsPanel.vue'
+import NativeBrowserPanel from '@/components/settings/NativeBrowserPanel.vue'
 const { t } = useI18n()
 
 const {
@@ -37,7 +38,7 @@ const {
 
 const activeTab = ref('ai')
 const route = useRoute()
-const validTabs = new Set(['notifications', 'ai', 'rotation', 'status', 'prompts'])
+const validTabs = new Set(['notifications', 'ai', 'rotation', 'status', 'prompts', 'browser'])
 const reasoningEfforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 
 const promptFiles = ref<string[]>([])
@@ -190,12 +191,16 @@ watch(selectedPrompt, async (value) => {
 
     <Tabs v-model="activeTab" class="w-full">
       <TabsList class="mb-4 flex w-full flex-nowrap justify-start gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
+        <TabsTrigger class="shrink-0" value="browser">{{ t('nativeBrowser.title') }}</TabsTrigger>
         <TabsTrigger class="shrink-0" value="ai">{{ t('settings.tabs.ai') }}</TabsTrigger>
         <TabsTrigger class="shrink-0" value="rotation">{{ t('settings.tabs.rotation') }}</TabsTrigger>
         <TabsTrigger class="shrink-0" value="notifications">{{ t('settings.tabs.notifications') }}</TabsTrigger>
         <TabsTrigger class="shrink-0" value="status">{{ t('settings.tabs.status') }}</TabsTrigger>
         <TabsTrigger class="shrink-0" value="prompts">{{ t('settings.tabs.prompts') }}</TabsTrigger>
       </TabsList>
+      <TabsContent value="browser">
+        <NativeBrowserPanel />
+      </TabsContent>
 
       <!-- AI Tab -->
       <TabsContent value="ai">

@@ -19,14 +19,14 @@
     button {
       margin: 10px 0;
       padding: 10px;
-      background-color: #4CAF50;
+      background-color: #3b82f6;
       color: white;
       border: none;
       cursor: pointer;
       width: 100%;
     }
     button:hover {
-      background-color: #45a049;
+      background-color: #2563eb;
     }
     .status {
       margin: 10px 0;
@@ -44,12 +44,19 @@
   </style>
 </head>
 <body>
-  <h2>Xianyu Login State Extractor</h2>
+  <h2>闲鱼 Chrome 采集</h2>
+  <p id="nativeStatus" role="status">正在检查连接…</p>
+  <button id="openNativeOptions">采集连接设置</button>
+  <button id="resumeNative" disabled>完成登录 / 验证后继续</button>
+  <details>
+  <summary>导出登录状态</summary>
   <button id="extractBtn">1.点击获取环境+登录状态</button>
   <div id="status"></div>
   <textarea id="stateOutput" readonly></textarea>
   <button id="copyBtn">2.点击复制</button>
+  </details>
 
   <script src="popup.js"></script>
+  <script src="native-popup.js"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ except ImportError:
     _USING_PYDANTIC_SETTINGS = False
 from pydantic import Field
 from typing import Optional
+import sys
 import os
 
 DEFAULT_TELEGRAM_API_BASE_URL = "https://api.telegram.org"
@@ -103,6 +104,7 @@ class ScraperSettings(_EnvSettings):
     login_is_edge: bool = _env_field(False, "LOGIN_IS_EDGE")
     running_in_docker: bool = _env_field(False, "RUNNING_IN_DOCKER")
     state_file: str = _env_field("xianyu_state.json", "STATE_FILE")
+    backend: str = _env_field("native_chrome" if sys.platform == "win32" else "playwright", "SCRAPER_BACKEND")
 
 
 class AppSettings(_EnvSettings):

@@ -1,4 +1,5 @@
 // Service worker for capturing browser environment, headers, storage, and cookies
+import "./native-bridge.js";
 
 const GOOFISH_HOST_PATTERN = "*://*.goofish.com/*";
 const MAX_STORAGE_ENTRY_LENGTH = 4096; // bytes limit to drop oversized values
