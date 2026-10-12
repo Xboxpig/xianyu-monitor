@@ -25,6 +25,7 @@ const zhCNExtra = {
       title: 'AI 标准生成进度',
       description: 'AI 正在生成或更新分析标准。',
       receiving: '正在接收流式输出',
+      waitingForOutput: '等待 AI 首段输出',
       generatedCharacters: '已生成 {count} 字符',
       helperFailed: '生成失败后会保留这个弹窗，方便你查看错误原因。',
       helperRunning: '任务已转入后台生成，你可以停留在这里查看步骤，也可以先关闭弹窗。',

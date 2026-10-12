@@ -251,7 +251,10 @@
       if (status === 'running' && job.current_step === 'llm') {
         const stream = element('div', 'ai-generation-pipeline-stream')
         const receiving = element('span')
-        receiving.append(element('i'), document.createTextNode(text.pipelineReceiving))
+        const waiting = locale() === 'zh' ? '等待 AI 首段输出' : 'Waiting for the first AI output'
+        receiving.append(element('i'), document.createTextNode(
+          Number(job.generated_characters || 0) > 0 ? text.pipelineReceiving : waiting,
+        ))
         stream.append(
           receiving,
           element('strong', '', text.generatedCharacters(Number(job.generated_characters || 0))),
@@ -304,6 +307,7 @@
     try {
       const response = await fetch(`/api/tasks/generate-jobs/${encodeURIComponent(state.pipelineJobId)}`, {
         credentials: 'same-origin',
+        cache: 'no-store',
         headers: { Accept: 'application/json' },
       })
       if (!response.ok) throw new Error(`${messages().pipelineFailed} (${response.status})`)
@@ -450,6 +454,7 @@
     try {
       const requestOptions = {
         credentials: 'same-origin',
+        cache: 'no-store',
         headers: { Accept: 'application/json' },
       }
       const [queueResponse, jobsResponse] = await Promise.all([

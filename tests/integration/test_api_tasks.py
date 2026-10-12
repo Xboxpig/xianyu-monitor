@@ -193,10 +193,22 @@ def test_list_generation_jobs_keeps_active_pipeline_visible(api_client, api_cont
     response = api_client.get("/api/tasks/generation/jobs?active_only=true")
 
     assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-store'
     jobs = response.json()["jobs"]
     assert [job["job_id"] for job in jobs] == [created.job_id]
     assert jobs[0]["task_name"] == "NAS"
     assert jobs[0]["status"] == "queued"
+
+
+def test_generation_job_polling_returns_updated_character_count(api_client, api_context):
+    service = api_context['task_generation_service']
+    created = asyncio.run(service.create_job('NAS'))
+    for count in (3, 7):
+        asyncio.run(service.advance(created.job_id, 'llm', 'streaming', count))
+        response = api_client.get(f'/api/tasks/generate-jobs/{created.job_id}')
+        assert response.status_code == 200
+        assert response.headers['cache-control'] == 'no-store'
+        assert response.json()['job']['generated_characters'] == count
 
 
 def test_generate_ai_task_returns_job_and_completes_async(api_client, api_context, monkeypatch):

@@ -115,7 +115,7 @@ def test_generate_criteria_throttles_stream_progress_to_one_second(monkeypatch, 
     reference_file = tmp_path / "reference.txt"
     reference_file.write_text("reference", encoding="utf-8")
     progress_events = []
-    monotonic_values = iter((0.0, 0.4, 1.0, 1.4))
+    monotonic_values = iter((0.0, 0.1, 0.4, 1.2, 1.3, 1.3))
 
     class FakeAIClient:
         def is_available(self):
@@ -155,7 +155,36 @@ def test_generate_criteria_throttles_stream_progress_to_one_second(monkeypatch, 
         for step, message, count in progress_events
         if step == "llm" and message.startswith("正在接收 SSE 输出")
     ]
-    assert streamed_counts == [2]
+    assert streamed_counts == [1, 3]
+
+
+def test_stream_progress_reports_first_chunk_before_burst_completes(monkeypatch):
+    counts = []
+
+    class FakeTime:
+        @staticmethod
+        def monotonic():
+            return 0.0
+
+    class BurstClient:
+        async def _call_ai(self, *_args, **kwargs):
+            await kwargs['on_text_delta']('')
+            assert counts == [0]
+            await kwargs['on_text_delta']('abc')
+            assert counts == [0, 3]
+            await kwargs['on_text_delta']('def')
+            assert counts == [0, 3]
+            return 'abcdef'
+
+    async def report_progress(_step, _message, count):
+        counts.append(count)
+
+    monkeypatch.setattr(prompt_utils, 'time', FakeTime)
+    result = asyncio.run(prompt_utils._request_generated_text_with_retry(
+        BurstClient(), 'prompt', report_progress,
+    ))
+    assert result == 'abcdef'
+    assert counts == [0, 3, 6]
 
 
 def test_generate_criteria_closes_ai_client_after_ai_failure(monkeypatch, tmp_path):

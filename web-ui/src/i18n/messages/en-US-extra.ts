@@ -25,6 +25,7 @@ const enUSExtra = {
       title: 'AI Criteria Generation',
       description: 'AI is generating or updating analysis criteria.',
       receiving: 'Receiving streamed output',
+      waitingForOutput: 'Waiting for the first AI output',
       generatedCharacters: '{count} characters generated',
       helperFailed: 'The dialog stays open after a failure so you can inspect the error.',
       helperRunning: 'The task is generating in the background. You can watch progress here or close this dialog.',

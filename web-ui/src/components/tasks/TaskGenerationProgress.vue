@@ -61,7 +61,7 @@ function resolveStepTextClass(step: TaskGenerationStep) {
     >
       <span class="flex items-center gap-2 text-sm font-medium">
         <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-blue-500" />
-        {{ t('tasks.generation.receiving') }}
+        {{ t(job.generated_characters > 0 ? 'tasks.generation.receiving' : 'tasks.generation.waitingForOutput') }}
       </span>
       <span class="font-mono text-sm font-semibold tabular-nums">
         {{ t('tasks.generation.generatedCharacters', { count: job.generated_characters }) }}

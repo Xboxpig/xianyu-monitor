@@ -39,7 +39,7 @@ export async function createTaskWithAI(data: TaskGenerateRequest): Promise<TaskC
 }
 
 export async function getTaskGenerationJob(jobId: string): Promise<TaskGenerationJob> {
-  const result = await http(`/api/tasks/generate-jobs/${jobId}`)
+  const result = await http(`/api/tasks/generate-jobs/${jobId}`, { cache: 'no-store' })
   return result.job
 }
 

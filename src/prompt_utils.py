@@ -144,13 +144,27 @@ async def _request_generated_text_with_retry(
     previous_error = ""
     for request_attempt in range(CRITERIA_API_MAX_ATTEMPTS):
         generated_characters = 0
-        last_reported_at = time.monotonic()
+        last_reported_at = 0.0
+        request_started_at = time.monotonic()
+        first_delta_at: Optional[float] = None
+        delta_count = 0
 
         async def report_stream_delta(delta: str) -> None:
-            nonlocal generated_characters, last_reported_at
+            nonlocal generated_characters, last_reported_at, first_delta_at, delta_count
+            if not delta:
+                return
             generated_characters += len(delta)
+            delta_count += 1
             now = time.monotonic()
-            if now - last_reported_at < 1.0:
+            is_first_delta = first_delta_at is None
+            if is_first_delta:
+                first_delta_at = now
+                print(
+                    f"[Criteria流式] job={queue_generation_job_id or '-'} "
+                    f"首段正文等待 {now - request_started_at:.2f}s。",
+                    flush=True,
+                )
+            if not is_first_delta and now - last_reported_at < 1.0:
                 return
             last_reported_at = now
             await _report_progress(
@@ -216,6 +230,16 @@ async def _request_generated_text_with_retry(
             continue
 
         generated_characters = len(generated_text)
+        elapsed = time.monotonic() - request_started_at
+        receiving_seconds = (
+            time.monotonic() - first_delta_at if first_delta_at is not None else 0.0
+        )
+        print(
+            f"[Criteria流式] job={queue_generation_job_id or '-'} "
+            f"完成 {elapsed:.2f}s，正文接收 {receiving_seconds:.2f}s，"
+            f"增量 {delta_count} 段，正文 {generated_characters} 字符。",
+            flush=True,
+        )
         await _report_progress(
             progress_callback,
             "llm",
