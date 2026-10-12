@@ -161,15 +161,8 @@ export async function interactPage(operation, options = {}) {
     .find(element => ![...element.children].some(child => child.textContent.trim() === label));
   const selected = element => [element, element.parentElement, element.closest("label")].filter(Boolean).some(node =>
     node.getAttribute("aria-checked") === "true" || node.getAttribute("aria-selected") === "true" || node.querySelector('input:checked') ||
+    node.querySelector('[class*="search-checkbox-checked--"]') ||
     /(^|[-_ ])(checked|selected|active)([-_ ]|$)/i.test(node.className));
-  const waitFor = async predicate => {
-    for (let attempt = 0; attempt < 13; attempt++) {
-      const result = predicate();
-      if (result) return result;
-      if (attempt < 12) await settle();
-    }
-    return null;
-  };
   const clickFilter = element => {
     // Only responses after the last filter change can represent all filters.
     sequenceFloor = window.__xianyuNativeCapture?.sequence || 0;
@@ -191,33 +184,54 @@ export async function interactPage(operation, options = {}) {
     if (options.new_publish_option) {
       const label = options.new_publish_option;
       const retry = error => ({ retry: true, error: "发布时间筛选「" + label + "」" + error, changed, sequenceFloor });
-      let option = exact(label);
-      if (!option || !selected(option)) {
-        const trigger = await waitFor(() => exact("新发布"));
-        if (!trigger && !option) return retry("未找到菜单入口。");
-        if (trigger) {
+      const pending = () => ({ pending: true, changed, sequenceFloor, error: "发布时间筛选「" + label + "」尚未生效。" });
+      // Goofish renders the options even while its CSS :hover menu is hidden.
+      // Clicking the existing item invokes the site's normal React handler;
+      // synthetic mouse events cannot activate CSS :hover in a minimized tab.
+      const dropdown = [...document.querySelectorAll('[class*="search-select-container"]')].find(node => {
+        const menu = node.querySelector('[class*="search-select-items-container"]');
+        const labels = menu ? [...menu.children].map(item => item.textContent.trim()) : [];
+        return visible(node) && labels.includes("最新") && labels.includes("1天内") && labels.includes("3天内");
+      });
+      const title = dropdown?.querySelector('[class*="search-select-title--"]');
+      const menu = dropdown?.querySelector('[class*="search-select-items-container"]');
+      const option = menu ? [...menu.children].find(item => item.textContent.trim() === label) : exact(label);
+      const applied = () => {
+        if (title) return title.textContent.trim() === label;
+        if (option && selected(option)) return true;
+        const clicked = window.__xianyuNativePublishFilter;
+        return clicked?.label === label && clicked.stage === "clicked" && (window.__xianyuNativeCapture?.entries || []).some(entry =>
+          entry.url.includes("idlemtopsearch.pc.search") && entry.sequence > clicked.sequenceFloor &&
+          entry.body?.ret?.some(value => value.startsWith("SUCCESS")));
+      };
+      const previous = window.__xianyuNativePublishFilter;
+      if (applied()) {
+        delete window.__xianyuNativePublishFilter;
+      } else if (previous?.label === label && previous.stage === "clicked") {
+        // Yield to the service worker between observations so background page
+        // timers cannot hold its poll loop and heartbeat for minutes.
+        if (Date.now() - previous.clickedAt < 15000) return pending();
+        delete window.__xianyuNativePublishFilter;
+        return retry("未确认筛选生效。");
+      } else if (option) {
+        clickFilter(option);
+        window.__xianyuNativePublishFilter = { label, stage: "clicked", clickedAt: Date.now(), sequenceFloor };
+        if (!applied()) return pending();
+        delete window.__xianyuNativePublishFilter;
+      } else {
+        const trigger = exact("新发布");
+        if (!trigger) return retry("未找到菜单入口。");
+        if (previous?.label !== label || previous.stage !== "opening") {
           trigger.click();
-          option = await waitFor(() => exact(label));
-          if (!option) {
-            // Some dropdown revisions open on hover rather than click.
-            for (const node of [trigger, trigger.parentElement].filter(Boolean)) {
-              node.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
-              node.dispatchEvent(new MouseEvent("mouseenter"));
-            }
-            option = await waitFor(() => exact(label));
+          for (const node of [trigger, trigger.parentElement].filter(Boolean)) {
+            node.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
           }
+          window.__xianyuNativePublishFilter = { label, stage: "opening", clickedAt: Date.now() };
+          return pending();
         }
-        if (!option) return retry("未找到菜单选项。");
-        if (!selected(option)) {
-          clickFilter(option);
-          const applied = await waitFor(() => {
-            const current = exact(label);
-            return (current && selected(current)) || (window.__xianyuNativeCapture?.entries || []).some(entry =>
-              entry.url.includes("idlemtopsearch.pc.search") && entry.sequence > sequenceFloor &&
-              entry.body?.ret?.some(value => value.startsWith("SUCCESS")));
-          });
-          if (!applied) return retry("未确认筛选生效。");
-        }
+        if (Date.now() - previous.clickedAt < 15000) return pending();
+        delete window.__xianyuNativePublishFilter;
+        return retry("未找到菜单选项。");
       }
     }
     let regionApplied = false;

@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<!-- Structure and selection behavior verified against Goofish xy-site 0.0.178.
+     The menu is controlled by CSS :hover; selection changes the title, and
+     clicking the selected item again resets the sort. -->
+<style>
+.search-select-container--fixture { position: relative; width: 120px; height: 40px; }
+.search-select-items-container--fixture { display: none; position: absolute; top: 50px; }
+.search-select-container--fixture:hover .search-select-items-container--fixture { display: flex; }
+</style>
+<div class="search-select-container--fixture">
+  <div class="search-select-title-container--fixture">
+    <span class="search-select-title--fixture">新发布</span>
+    <div class="search-select-arrow--fixture"></div>
+  </div>
+  <div class="search-select-items-container--fixture">
+    <div class="search-select-item--fixture">最新</div>
+    <div class="search-select-item--fixture">1天内</div>
+    <div class="search-select-item--fixture">3天内</div>
+    <div class="search-select-item--fixture">7天内</div>
+    <div class="search-select-item--fixture">14天内</div>
+  </div>
+</div>
+<script>
+(() => {
+window.clicks = 0;
+window.__xianyuNativeCapture = { sequence: 7, entries: [] };
+const title = document.querySelector('[class*="search-select-title--"]');
+for (const option of document.querySelectorAll('[class*="search-select-item--"]')) {
+  option.onclick = () => {
+    window.clicks++;
+    const label = option.textContent;
+    queueMicrotask(() => {
+      title.textContent = title.textContent === label ? '新发布' : label;
+      option.style.fontWeight = title.textContent === label ? '600' : '';
+      window.__xianyuNativeCapture.sequence++;
+      window.__xianyuNativeCapture.entries.push({ url: 'idlemtopsearch.pc.search',
+        sequence: window.__xianyuNativeCapture.sequence, body: { ret: ['SUCCESS::OK'] } });
+    });
+  };
+}
+})();
+</script>

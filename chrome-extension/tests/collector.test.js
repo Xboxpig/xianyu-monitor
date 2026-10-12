@@ -88,8 +88,8 @@ async function withFilterPage(run) {
     return element;
   };
   globalThis.window = { __xianyuNativeCapture: page.capture };
-  globalThis.document = { querySelectorAll: selector => nodes.filter(node =>
-    selector.includes('div') || node.tagName !== 'DIV') };
+  globalThis.document = { querySelectorAll: selector => selector === '[class*="search-select-container"]' ?
+    nodes.filter(node => node.dropdown) : nodes.filter(node => selector.includes('div') || node.tagName !== 'DIV') };
   globalThis.getComputedStyle = () => ({ visibility: 'visible' });
   globalThis.MouseEvent = class { constructor(type) { this.type = type; } };
   globalThis.setTimeout = (callback, delay) => { page.elapsed += delay; page.advance(); callback(); };
@@ -106,6 +106,10 @@ test('publication filter selects div menu items after delayed rendering', async 
     // Both ancestors and the leaf match text, as in custom React dropdowns.
     page.add('最新', { tagName: 'DIV', children: [option], click: () => assert.fail('clicked menu wrapper') });
     page.advance = () => { if (openedAt != null && page.elapsed - openedAt >= 1000) option.hidden = false; };
+    const opening = await interactPage('filters', { new_publish_option: '最新' });
+    assert.equal(opening.pending, true);
+    page.elapsed = 1000;
+    page.advance();
     const result = await interactPage('filters', { new_publish_option: '最新' });
     assert.equal(result.retry, undefined);
     assert.equal(result.changed, true);
@@ -120,6 +124,7 @@ test('hover menus and all publication ranges are selected automatically', async 
     await withFilterPage(async page => {
       const option = page.add(label, { tagName: 'DIV', hidden: true, click() { this.attributes = { 'aria-selected': 'true' }; } });
       page.add('新发布', { tagName: 'DIV', dispatchEvent(event) { if (event.type === 'mouseover') option.hidden = false; } });
+      await interactPage('filters', { new_publish_option: label });
       const result = await interactPage('filters', { new_publish_option: label });
       assert.equal(result.retry, undefined, label);
       assert.equal(result.changed, true, label);
@@ -143,12 +148,59 @@ test('missing or ineffective publication controls request automatic retry', asyn
         page.add('新发布', { tagName: 'DIV' });
         page.add('最新', { tagName: 'DIV' });
       }
-      const result = await interactPage('filters', { new_publish_option: '最新' });
+      let result = await interactPage('filters', { new_publish_option: '最新' });
+      if (ineffective) {
+        assert.equal(result.pending, true);
+        window.__xianyuNativePublishFilter.clickedAt -= 15001;
+        result = await interactPage('filters', { new_publish_option: '最新' });
+      }
       assert.equal(result.retry, true);
       assert.equal(result.attention, undefined);
       assert.match(result.error, /未找到菜单入口|未确认筛选生效/);
     });
   }
+});
+
+test('CSS hover-only publication menu is selected while hidden and never toggled off', async () => {
+  for (const label of ['最新', '1天内', '3天内', '7天内', '14天内']) {
+    await withFilterPage(async page => {
+      let clicks = 0;
+      let nextTitle;
+      const title = page.add('新发布');
+      const items = ['最新', '1天内', '3天内', '7天内', '14天内'].map(text => page.add(text, {
+        hidden: true, click() { clicks++; nextTitle = title.textContent === text ? '新发布' : text; },
+      }));
+      const menu = { children: items };
+      page.add(items.map(item => item.textContent).join(''), { dropdown: true,
+        querySelector: selector => selector.includes('items-container') ? menu : title });
+      const started = await interactPage('filters', { new_publish_option: label });
+      assert.equal(started.pending, true);
+      assert.equal(clicks, 1);
+      // Before React commits, another observation must not cancel the choice.
+      assert.equal((await interactPage('filters', { new_publish_option: label })).pending, true);
+      assert.equal(clicks, 1);
+      title.textContent = nextTitle;
+      const applied = await interactPage('filters', { new_publish_option: label });
+      assert.equal(applied.pending, undefined);
+      assert.equal(applied.retry, undefined);
+      assert.equal(clicks, 1);
+      assert.equal(page.elapsed, 0, 'publication logic must not wait on page timers');
+    });
+  }
+});
+
+test('Goofish nested checked indicators prevent toggling personal filters on a subsequent tick', async () => {
+  await withFilterPage(async page => {
+    let checked = false;
+    let clicks = 0;
+    const container = page.add('个人闲置', { children: [{ textContent: '个人闲置' }],
+      querySelector: selector => selector.includes('search-checkbox-checked--') && checked ? {} : null });
+    page.add('个人闲置', { parentElement: container, click() { clicks++; checked = !checked; } });
+    await interactPage('filters', { personal_only: true });
+    const result = await interactPage('filters', { personal_only: true });
+    assert.equal(result.personalApplied, true);
+    assert.equal(clicks, 1);
+  });
 });
 
 test('the final filter response must be newer than earlier checkbox responses', async () => {

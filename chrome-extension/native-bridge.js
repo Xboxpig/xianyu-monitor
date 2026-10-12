@@ -80,6 +80,7 @@ async function resumeWhenReady(state, attention) {
   if (result?.outcome !== 'ok') return;
   const updatedFilters = state.phase === 'filters' && attention.message.includes('发布时间筛选') &&
     state.collectorVersion !== chrome.runtime.getManifest().version;
+  if (state.phase === 'filters' && attention.message.includes('发布时间筛选') && !updatedFilters) return;
   if (!updatedFilters && !attention.message.includes('扩展已断开') && pageCheckpoint(snapshot) === state.attentionCheckpoint) return;
   await resume();
 }
@@ -186,12 +187,20 @@ async function collectStep(state) {
   if (state.phase === "filters") {
     const result = await execute(tabId, interactPage, ["filters", command.task]);
     if (result?.changed) state.searchSequenceFloor = result.sequenceFloor;
+    if (result?.pending) {
+      if (Date.now() - state.startedAt > 120000) {
+        await queueReport(state, { outcome: "error", message: result.error + "自动筛选超时。" });
+      } else {
+        await save(state);
+      }
+      return;
+    }
     if (result?.retry) {
       state.filterAttempts = (state.filterAttempts || 0) + 1;
       if (state.filterAttempts < 4) {
         await save(state);
       } else {
-        await queueReport(state, { outcome: "attention", message: result.error + "扩展已自动重试，请重新加载扩展并重启任务。" });
+        await queueReport(state, { outcome: "error", message: result.error + "扩展自动重试失败。" });
       }
       return;
     }
