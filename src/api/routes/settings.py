@@ -18,6 +18,7 @@ from src.api.dependencies import get_process_service
 from src.infrastructure.config.env_manager import env_manager
 from src.infrastructure.config.settings import (
     AISettings,
+    ScraperSettings,
     reload_settings,
     scraper_settings,
 )
@@ -39,6 +40,24 @@ from src.services.process_service import ProcessService
 
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+class BrowserSettingsModel(BaseModel):
+    task_memory_mb: int = Field(default=2048, ge=512, le=1_048_576)
+
+
+@router.get("/browser")
+async def get_browser_settings():
+    return {"task_memory_mb": ScraperSettings().task_memory_mb}
+
+
+@router.post("/browser")
+async def save_browser_settings(payload: BrowserSettingsModel):
+    if not env_manager.set_value("BROWSER_TASK_MEMORY_MB", str(payload.task_memory_mb)):
+        raise HTTPException(500, "无法保存浏览器设置。")
+    _reload_env()
+    return {"task_memory_mb": ScraperSettings().task_memory_mb}
+
 AI_TEST_PROMPT = "Reply with OK only."
 AI_TEST_MAX_OUTPUT_TOKENS = 32
 

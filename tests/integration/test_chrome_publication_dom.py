@@ -106,3 +106,24 @@ def test_missing_price_controls_request_bounded_retry(chrome_browser, collector_
         assert result["retry"] and "页面价格筛选未找到" in result["error"]
     finally:
         page.close()
+
+
+def test_actual_goofish_pagination_structure_turns_and_stops_at_disabled_last_page(chrome_browser):
+    repo = Path(__file__).resolve().parents[2]
+    source = (repo / 'chrome-extension/collector.js').read_text(encoding='utf-8')
+    read_source = source[source.index('export function readPage'):source.index('export async function interactPage')].replace('export function', 'function', 1)
+    interact_source = source[source.index('export async function interactPage'):source.index('export function collectSnapshot')].replace('export async', 'async', 1)
+    reader = '() => { ' + read_source + '; return readPage("search_next"); }'
+    turner = 'async () => { ' + interact_source + '; return await interactPage("next"); }'
+    page = chrome_browser.new_page()
+    try:
+        page.set_content((repo / 'chrome-extension/tests/fixtures/pagination.html').read_text(encoding='utf-8'))
+        initial = page.evaluate(reader)
+        assert initial['hasMore'] and initial['currentPage'] == 1
+        assert page.evaluate(turner)['clicked']
+        last = page.evaluate(reader)
+        assert last['currentPage'] == 2 and not last['hasMore']
+        assert not page.evaluate(turner)['clicked']
+        assert page.evaluate('window.clicks') == 1
+    finally:
+        page.close()

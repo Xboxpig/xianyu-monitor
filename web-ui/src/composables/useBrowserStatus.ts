@@ -5,7 +5,7 @@ export interface BrowserStatus {
   backend: string
   connected: boolean
   clients: { client_id: string; name: string; account_state_file?: string; profile_directory?: string; online: boolean }[]
-  runs: { run_id: string; task_name: string; state: string; message: string; page: number }[]
+  runs: { run_id: string; task_name: string; state: string; message: string; page: number; active_windows?: number; memory_mb?: number; memory_limit_mb?: number }[]
 }
 
 const status = ref<BrowserStatus | null>(null)

@@ -14,6 +14,20 @@ const selectedProfile = ref('')
 const token = ref('')
 const error = ref('')
 const working = ref(false)
+const memoryGb = ref(2)
+const savingMemory = ref(false)
+const memorySaved = ref(false)
+async function saveMemory() {
+  savingMemory.value = true
+  memorySaved.value = false
+  error.value = ''
+  try {
+    await http('/api/settings/browser', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task_memory_mb: Math.round(Number(memoryGb.value) * 1024) }) })
+    memorySaved.value = true
+    await refresh()
+  } catch (e) { error.value = (e as Error).message }
+  finally { savingMemory.value = false }
+}
 let autoShown = false
 watch(status, (value) => {
   if (value?.backend === 'native_chrome' && !value.connected && !autoShown) {
@@ -41,6 +55,8 @@ async function setup(launch = false) {
 onMounted(async () => {
   await refresh()
   if (status.value?.backend === 'native_chrome') {
+    try { memoryGb.value = (await http('/api/settings/browser')).task_memory_mb / 1024 }
+    catch (e) { error.value = (e as Error).message }
     try { profiles.value = (await http('/api/browser/profiles')).profiles }
     catch (e) { error.value = (e as Error).message }
   }
@@ -64,6 +80,16 @@ onUnmounted(() => {
         <p class="font-semibold" :class="status?.connected ? 'text-emerald-600' : 'text-slate-500'">
           {{ t(status?.connected ? 'nativeBrowser.connected' : 'nativeBrowser.disconnected') }}
         </p>
+        <div class="space-y-3 rounded-xl border border-slate-200 p-4">
+          <label for="native-task-memory" class="block text-sm font-semibold">{{ t('nativeBrowser.memoryLimit') }}</label>
+          <div class="flex items-center gap-3">
+            <Input id="native-task-memory" v-model="memoryGb" type="number" min="0.5" max="1024" step="0.25" class="max-w-40" @update:model-value="memorySaved = false" />
+            <span>GB</span>
+            <Button :disabled="savingMemory || Number(memoryGb) < 0.5 || Number(memoryGb) > 1024" @click="saveMemory">{{ t('nativeBrowser.saveMemory') }}</Button>
+            <span v-if="memorySaved" role="status" class="text-sm text-emerald-600">{{ t('nativeBrowser.memorySaved') }}</span>
+          </div>
+          <p class="text-sm text-slate-500">{{ t('nativeBrowser.memoryHelp') }}</p>
+        </div>
         <ol class="list-decimal space-y-2 pl-5 text-sm text-slate-600">
           <li>{{ t('nativeBrowser.install') }}</li>
           <li>{{ t('nativeBrowser.pair') }}</li>
@@ -94,6 +120,7 @@ onUnmounted(() => {
         <div v-for="run in status?.runs || []" :key="run.run_id" class="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm">
           <p class="font-semibold">{{ run.task_name }} · {{ t('nativeBrowser.page', { page: run.page }) }}</p>
           <p>{{ run.message || t(run.state === 'analyzing' ? 'nativeBrowser.analyzing' : 'nativeBrowser.collecting') }}</p>
+          <p>{{ t('nativeBrowser.memoryUsage', { windows: run.active_windows || 0, used: run.memory_mb || 0, limit: run.memory_limit_mb || 2048 }) }}</p>
         </div>
       </template>
     </CardContent>

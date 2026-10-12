@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from src.domain.models.browser import BrowserClient, BrowserItem, BrowserReport
-from src.infrastructure.config.settings import AISettings
+from src.infrastructure.config.settings import AISettings, ScraperSettings
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.services.native_result_processor import NativeResultProcessor
 from src.services.process_service import TaskStartError
@@ -24,6 +24,7 @@ from src.services.windows_desktop_service import windows_desktop_service
 
 CLIENT_TIMEOUT = 90
 COMMAND_TIMEOUT = 180
+WINDOW_RESERVATION_MB = 256
 
 
 @dataclass
@@ -43,7 +44,10 @@ class NativeRun:
     collecting: bool = True
     items: deque = field(default_factory=deque)
     market: list = field(default_factory=list)
-    current_item: BrowserItem | None = None
+    commands: dict = field(default_factory=dict)
+    search_done: bool = False
+    discovered: set = field(default_factory=set)
+    memory: dict = field(default_factory=dict)
     seen: set = field(default_factory=set)
     receipts: set = field(default_factory=set)
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=32))
@@ -115,7 +119,9 @@ class NativeBrowserService:
             "runs": [{"task_id": r.task.id, "task_name": r.task.task_name,
                       "run_id": r.run_id, "client_id": r.client_id,
                       "state": "attention" if r.waiting else ("collecting" if r.collecting else "analyzing"),
-                      "message": r.waiting, "page": r.page, "pending_analysis": r.queue.qsize()}
+                      "message": r.waiting, "page": r.page, "pending_analysis": r.queue.qsize(),
+                      "active_windows": len(r.memory), "memory_mb": sum(r.memory.values()),
+                      "memory_limit_mb": ScraperSettings().task_memory_mb}
                      for r in self.processes.values()],
         }
 
@@ -125,13 +131,19 @@ class NativeBrowserService:
         with path.open("a", encoding="utf-8") as source:
             source.write("[" + datetime.now().isoformat(timespec="seconds") + "] " + message + "\n")
 
-    def _issue(self, run, action, url=""):
-        run.command = {
+    def _issue(self, run, action, url="", *, item=None, market=None, region=None, slot_id=None):
+        command = {
             "run_id": run.run_id, "command_id": secrets.token_hex(16),
             "action": action, "url": url, "page": run.page,
+            "slot_id": slot_id or ("search" if action.startswith("search") else secrets.token_hex(16)),
             "task": run.task.model_dump(exclude={"ai_prompt_base_file", "ai_prompt_criteria_file", "description"}),
         }
-        run.issued_at = 0
+        run.commands[command["command_id"]] = {
+            "command": command, "item": item, "market": market or [],
+            "region": region, "issued_at": 0, "waiting": "",
+        }
+        run.command = command
+        return command
 
     def _search_url(self, run):
         return "https://www.goofish.com/search?" + urlencode({"q": run.task.keyword})
@@ -179,18 +191,64 @@ class NativeBrowserService:
             return False
 
     async def poll(self, client: BrowserClient):
-        self.clients[client.client_id] = {"info": client.model_dump(), "last_seen": time.monotonic()}
-        # One run per Chrome profile at a time; other tasks remain queued.
+        self.clients[client.client_id] = {"info": client.model_dump(exclude={"windows"}), "last_seen": time.monotonic()}
         run = next((r for r in self.processes.values() if r.client_id == client.client_id and r.collecting and r.returncode is None), None)
         if run is None:
-            return {"command": None, "attention": None}
-        if run.waiting:
-            return {"command": None, "attention": {"run_id": run.run_id, "message": run.waiting}}
-        if run.queue.full():
-            return {"command": None, "attention": None, "active_run_id": run.run_id}
-        if run.command and not run.issued_at:
-            run.issued_at = time.monotonic()
-        return {"command": run.command, "attention": None}
+            return {"command": None, "commands": [], "attention": None}
+        async with run.lock:
+            budget = ScraperSettings().task_memory_mb
+            if client.parallel:
+                # Stable Chrome exposes heap only. Each owned window reserves native/DOM/image
+                # overhead too; this is admission accounting, not an OS process memory limit.
+                run.memory = {w.slot_id: max(WINDOW_RESERVATION_MB, w.memory_mb)
+                              for w in client.windows if w.run_id == run.run_id}
+            reserved = dict(run.memory)
+            for entry in run.commands.values():
+                if entry["issued_at"]:
+                    reserved.setdefault(entry["command"]["slot_id"], WINDOW_RESERVATION_MB)
+            dispatched = [e for e in run.commands.values() if e["issued_at"]]
+            def admit_pending():
+                for entry in sorted(run.commands.values(), key=lambda e: e["command"]["action"].startswith("search_next")):
+                    if entry["issued_at"] or entry["waiting"] or run.queue.full():
+                        continue
+                    if not client.parallel and dispatched:
+                        continue
+                    slot = entry["command"]["slot_id"]
+                    if client.parallel and slot not in reserved and sum(reserved.values()) + WINDOW_RESERVATION_MB > budget:
+                        continue
+                    entry["issued_at"] = time.monotonic()
+                    reserved.setdefault(slot, WINDOW_RESERVATION_MB)
+                    dispatched.append(entry)
+            if client.parallel:
+                # Continue existing windows (seller stage and page turns) before opening more.
+                admit_pending()
+            # Details get the next available slot, while pagination uses its existing window.
+            if not run.queue.full() and (client.parallel or not dispatched):
+                while run.items:
+                    if not client.parallel and any(e["command"]["action"] == "detail" for e in run.commands.values()):
+                        break
+                    if client.parallel and sum(reserved.values()) + WINDOW_RESERVATION_MB > budget:
+                        break
+                    item, market, region = run.items.popleft()
+                    command = self._issue(run, "detail", "https://www.goofish.com/item?id=" + item.id,
+                                          item=item, market=market, region=region)
+                    if client.parallel:
+                        entry = run.commands[command["command_id"]]
+                        entry["issued_at"] = time.monotonic()
+                        reserved[command["slot_id"]] = WINDOW_RESERVATION_MB
+                        dispatched.append(entry)
+                    else:
+                        break
+            admit_pending()
+            commands = [e["command"] for e in dispatched if not e["waiting"]]
+            attentions = [{"run_id": run.run_id, "command_id": e["command"]["command_id"], "message": e["waiting"]}
+                          for e in dispatched if e["waiting"]]
+            run.waiting = attentions[0]["message"] if attentions else ""
+            run.command = commands[0] if commands else None
+            run.issued_at = dispatched[0]["issued_at"] if dispatched else 0
+            return {"command": run.command, "commands": commands, "attention": attentions[0] if attentions else None,
+                    "attentions": attentions, "active_run_id": run.run_id, "memory_limit_mb": budget,
+                    "keep_search": not run.search_done, "memory_mb": sum(reserved.values())}
 
     async def report(self, report: BrowserReport):
         run = next((r for r in self.processes.values() if r.run_id == report.run_id), None)
@@ -205,12 +263,13 @@ class NativeBrowserService:
                 raise PermissionError("This run belongs to another Chrome profile.")
             if report.command_id in run.receipts:
                 return {"accepted": True}
-            if not run.command or run.command["command_id"] != report.command_id:
+            entry = run.commands.get(report.command_id)
+            if not entry or not entry["issued_at"]:
                 raise ValueError("Stale command.")
             if report.outcome == "attention":
                 message = report.message or "请在 Chrome 页面中完成登录或验证，页面恢复后将自动继续。"
-                changed = run.waiting != message
-                run.waiting = message
+                changed = entry["waiting"] != message
+                entry["waiting"] = run.waiting = message
                 self._log(run, "[Chrome] 等待人工处理：" + run.waiting)
                 if changed:
                     await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)
@@ -221,7 +280,7 @@ class NativeBrowserService:
                 await self._finish(run, failed=True)
                 self.history.append((report.run_id, report.command_id, report.client_id))
                 return {"accepted": True}
-            action = run.command["action"]
+            action = entry["command"]["action"]
             if action in ("search", "search_next"):
                 run.personal_applied = report.personal_applied
                 run.region_applied = report.region_applied
@@ -233,34 +292,44 @@ class NativeBrowserService:
                     self._log(run, "[硬过滤] " + reason)
                 run.market = kept
                 await self.processor.record_market(run.task, kept, run.run_id)
-                run.items = deque(i for i in kept if "https://www.goofish.com/item?id=" + i.id not in run.seen)
+                fresh = []
+                for item in kept:
+                    if "https://www.goofish.com/item?id=" + item.id not in run.seen and item.id not in run.discovered:
+                        run.discovered.add(item.id)
+                        fresh.append(item)
+                run.items.extend((i, list(kept), report.region_applied) for i in fresh)
                 run.has_more = report.has_more
-                self._log(run, f"[Chrome] 第 {run.page} 页：{len(candidates)} 件，待采集详情 {len(run.items)} 件")
+                self._log(run, f"[Chrome] 第 {run.page} 页：{len(candidates)} 件，待采集详情 {len(fresh)} 件（已处理/重复 {len(kept) - len(fresh)} 件）")
+                if run.has_more and run.page < run.task.max_pages:
+                    run.page += 1
+                    self._issue(run, "search_next", self._search_url(run))
+                else:
+                    run.search_done = True
             elif action == "detail":
-                if not report.item or report.item.id != run.current_item.id:
+                if not report.item or report.item.id != entry["item"].id:
                     raise ValueError("Item ID does not match the requested detail page.")
                 # Keep search-only fields when the detail response does not expose them.
                 update = {k: v for k, v in report.item.model_dump().items() if v not in ("", [], None)}
-                run.current_item = run.current_item.model_copy(update=update)
-                kept, reasons = self.processor.filter(run.task, [run.current_item], run.region_applied)
+                entry["item"] = entry["item"].model_copy(update=update)
+                kept, reasons = self.processor.filter(run.task, [entry["item"]], entry["region"])
                 if not kept:
                     self._log(run, "[硬过滤] " + "；".join(reasons))
-                    run.current_item = None
-                elif run.current_item.seller_id:
-                    run.receipts.add(report.command_id)
-                    self._issue(run, "seller", "https://www.goofish.com/personal?" + urlencode({"userId": run.current_item.seller_id}))
-                    return {"accepted": True}
+                    entry["item"] = None
+                elif entry["item"].seller_id:
+                    self._issue(run, "seller", "https://www.goofish.com/personal?" + urlencode({"userId": entry["item"].seller_id}),
+                                item=entry["item"], market=entry["market"], region=entry["region"], slot_id=entry["command"]["slot_id"])
                 else:
-                    await self._submit(run, {})
+                    await self._submit(run, entry, {})
             elif action == "seller":
-                await self._submit(run, report.seller)
+                await self._submit(run, entry, report.seller)
+            run.commands.pop(report.command_id, None)
             run.receipts.add(report.command_id)
             self.history.append((report.run_id, report.command_id, report.client_id))
             await self._advance(run)
             return {"accepted": True}
 
-    async def _submit(self, run, seller):
-        item = run.current_item
+    async def _submit(self, run, entry, seller):
+        item = entry["item"]
         link = "https://www.goofish.com/item?id=" + item.id
         key = (run.task.keyword, link)
         if key not in self._inflight:
@@ -269,26 +338,16 @@ class NativeBrowserService:
             try:
                 stored = await asyncio.to_thread(load_processed_link_keys, run.task.keyword)
                 if link not in stored:
-                    await run.queue.put((item, seller, list(run.market)))
+                    await run.queue.put((item, seller, list(entry["market"])))
                     queued = True
             finally:
                 if not queued:
                     self._inflight.pop(key, None)
         run.seen.add(link)
-        run.current_item = None
+        entry["item"] = None
 
     async def _advance(self, run):
-        while run.items:
-            item = run.items.popleft()
-            if "https://www.goofish.com/item?id=" + item.id in run.seen:
-                continue
-            run.current_item = item
-            self._issue(run, "detail", "https://www.goofish.com/item?id=" + item.id)
-            return
-        if run.has_more and run.page < run.task.max_pages:
-            run.page += 1
-            self._issue(run, "search_next", self._search_url(run))
-        else:
+        if run.search_done and not run.items and not run.commands and run.collecting:
             run.collecting = False
             run.command = None
             run.finishing = asyncio.create_task(self._complete_when_analyzed(run))
@@ -341,19 +400,24 @@ class NativeBrowserService:
             await self._finish(run, failed=True)
         return True
 
-    async def resume(self, client_id, run_id):
+    async def resume(self, client_id, run_id, command_id=None):
         run = next((r for r in self.processes.values() if r.run_id == run_id), None)
         if run is None:
             raise ValueError("任务已经结束。")
         async with run.lock:
             if run.client_id != client_id:
                 raise PermissionError("This run belongs to another Chrome profile.")
-            if run.waiting and run.command:
-                old = run.command
-                self._issue(run, old["action"], old["url"])
-                run.command["resume"] = True
-                run.waiting = ""
+            for key, entry in tuple(run.commands.items()):
+                if not entry["waiting"] or (command_id and key != command_id):
+                    continue
+                old = entry["command"]
+                run.commands.pop(key)
+                command = self._issue(run, old["action"], old["url"], item=entry["item"],
+                                      market=entry["market"], region=entry["region"], slot_id=old["slot_id"])
+                command["page"] = old["page"]
+                command["resume"] = True
                 self._log(run, "[Chrome] 页面恢复，继续采集")
+            run.waiting = next((e["waiting"] for e in run.commands.values() if e["waiting"]), "")
         return {"resumed": True}
 
     async def _watch_connections(self):
@@ -362,17 +426,20 @@ class NativeBrowserService:
             now = time.monotonic()
             for run in tuple(self.processes.values()):
                 async with run.lock:
-                    if (self.processes.get(run.task.id) is not run or run.returncode is not None
-                            or not run.collecting or run.waiting or not run.command):
+                    if self.processes.get(run.task.id) is not run or run.returncode is not None or not run.collecting:
                         continue
                     client = self.clients.get(run.client_id)
-                    if not client or now - client["last_seen"] > CLIENT_TIMEOUT:
-                        run.waiting = "Chrome 扩展已断开。请重新打开 Chrome，连接和页面恢复后将自动继续。"
-                    elif run.issued_at and now - run.issued_at > COMMAND_TIMEOUT:
-                        run.waiting = "页面采集超时。请检查 Chrome 中的页面，数据恢复后将自动继续。"
-                    if run.waiting:
-                        self._log(run, "[Chrome] " + run.waiting)
-                        await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)
+                    for entry in run.commands.values():
+                        if not entry["issued_at"] or entry["waiting"]:
+                            continue
+                        if not client or now - client["last_seen"] > CLIENT_TIMEOUT:
+                            entry["waiting"] = "Chrome 扩展已断开。请重新打开 Chrome，连接和页面恢复后将自动继续。"
+                        elif now - entry["issued_at"] > COMMAND_TIMEOUT:
+                            entry["waiting"] = "页面采集超时。请检查 Chrome 中的页面，数据恢复后将自动继续。"
+                        if entry["waiting"]:
+                            run.waiting = entry["waiting"]
+                            self._log(run, "[Chrome] " + run.waiting)
+                            await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)
 
     async def stop_all(self):
         for task_id in tuple(self.processes):

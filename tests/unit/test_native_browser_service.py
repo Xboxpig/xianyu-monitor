@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from src.domain.models.browser import BrowserClient, BrowserItem, BrowserReport
+from src.domain.models.browser import BrowserClient, BrowserItem, BrowserReport, BrowserMemory
 from src.domain.models.task import Task
 from src.services.native_browser_service import NativeBrowserService
 from src.services.native_result_processor import NativeResultProcessor
@@ -243,5 +243,106 @@ def test_same_keyword_runs_share_inflight_and_recheck_saved_items(tmp_path, monk
         assert processor.processed == [(1, "123", {})]
         await service.stop_all()
         assert not service._inflight
+
+    asyncio.run(scenario())
+
+
+def test_parallel_details_overlap_pagination_and_keep_item_ownership(tmp_path, monkeypatch, sample_task_payload):
+    monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '1024')
+    service, processor = make_service(tmp_path, monkeypatch, sample_task_payload, max_pages=2)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        search = (await service.poll(client))['commands'][0]
+        items = [BrowserItem(id=str(i), price='100') for i in range(1, 7)]
+        await service.report(report_for(search, items=items + [items[0]], has_more=True))
+        client.windows = [BrowserMemory(run_id=search['run_id'], slot_id='search', memory_mb=256)]
+        response = await service.poll(client)
+        details = [c for c in response['commands'] if c['action'] == 'detail']
+        page = next(c for c in response['commands'] if c['action'] == 'search_next')
+        assert len(details) == 3 and page['page'] == 2
+        assert response['memory_mb'] == 1024
+        # Page two returns before any page-one details. Duplicates remain deduplicated.
+        await service.report(report_for(page, items=items, has_more=False))
+        for command in reversed(details):
+            item_id = command['url'].split('=')[-1]
+            await service.report(report_for(command, item=BrowserItem(id=item_id, seller_id=str(int(item_id) + 100))))
+        sellers = [c for c in (await service.poll(client))['commands'] if c['action'] == 'seller']
+        assert len(sellers) == 3
+        for command in reversed(sellers):
+            await service.report(report_for(command, seller={'seller_id': command['url'].split('=')[-1]}))
+        await asyncio.sleep(0)
+        assert {item: seller['seller_id'] for _, item, seller in processor.processed} == {'1': '101', '2': '102', '3': '103'}
+        # Remaining candidates can now use released slots. Never lose them on page change.
+        response = await service.poll(client)
+        for command in response['commands']:
+            await service.report(report_for(command, item=BrowserItem(id=command['url'].split('=')[-1])))
+        await service.processes[1].queue.join()
+        assert sorted(item for _, item, _ in processor.processed) == ['1', '2', '3', '4', '5', '6']
+        await service.stop_all()
+
+    asyncio.run(scenario())
+
+
+def test_memory_budget_resizes_without_fixed_concurrency_or_losing_active_work(tmp_path, monkeypatch, sample_task_payload):
+    monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '2048')
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        search = (await service.poll(client))['command']
+        await service.report(report_for(search, items=[BrowserItem(id=str(i)) for i in range(1, 31)]))
+        response = await service.poll(client)
+        active = response['commands']
+        assert len(active) == 8  # No fixed three-window limit.
+        client.windows = [BrowserMemory(run_id=c['run_id'], slot_id=c['slot_id'], memory_mb=400) for c in active]
+        monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '512')
+        assert (await service.poll(client))['commands'] == active
+        for command in active:
+            await service.report(report_for(command, item=BrowserItem(id=command['url'].split('=')[-1])))
+        # Windows still exist until the extension closes them; keep their reservation.
+        assert (await service.poll(client))['commands'] == []
+        client.windows = []
+        small = (await service.poll(client))['commands']
+        assert len(small) == 2
+        monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '4096')
+        expanded = (await service.poll(client))['commands']
+        assert len(expanded) == 16
+        assert {c['command_id'] for c in small}.issubset({c['command_id'] for c in expanded})
+        await service.stop_all()
+        with pytest.raises(ValueError):
+            await service.report(report_for(expanded[0]))
+
+    asyncio.run(scenario())
+
+
+def test_one_paused_parallel_window_does_not_block_other_items(tmp_path, monkeypatch, sample_task_payload):
+    service, processor = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        search = (await service.poll(client))['command']
+        await service.report(report_for(search, items=[BrowserItem(id='1'), BrowserItem(id='2')]))
+        paused, other = (await service.poll(client))['commands']
+        await service.report(report_for(paused, outcome='attention', message='login required'))
+        response = await service.poll(client)
+        assert response['commands'] == [other]
+        assert response['attentions'][0]['command_id'] == paused['command_id']
+        await service.report(report_for(other, item=BrowserItem(id='2')))
+        await service.resume(client.client_id, paused['run_id'], paused['command_id'])
+        resumed = (await service.poll(client))['commands'][0]
+        assert resumed['slot_id'] == paused['slot_id'] and resumed['resume']
+        with pytest.raises(ValueError):
+            await service.report(report_for(paused))
+        await service.report(report_for(resumed, item=BrowserItem(id='1')))
+        await service.processes[1].queue.join()
+        assert sorted(i for _, i, _ in processor.processed) == ['1', '2']
+        await service.stop_all()
 
     asyncio.run(scenario())

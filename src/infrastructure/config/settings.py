@@ -107,6 +107,7 @@ class ScraperSettings(_EnvSettings):
     running_in_docker: bool = _env_field(False, "RUNNING_IN_DOCKER")
     state_file: str = _env_field("xianyu_state.json", "STATE_FILE")
     backend: str = _env_field("native_chrome" if sys.platform == "win32" else "playwright", "SCRAPER_BACKEND")
+    task_memory_mb: int = _env_field(2048, "BROWSER_TASK_MEMORY_MB", ge=512, le=1_048_576)
 
 
 class AppSettings(_EnvSettings):

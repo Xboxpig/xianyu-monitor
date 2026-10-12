@@ -1,0 +1,21 @@
+<!doctype html>
+<html><body>
+<div class="search-pagination-container--fixture">
+  <button disabled><div class="search-pagination-arrow-left--fixture"></div></button>
+  <div class="search-pagination-page-box--fixture search-pagination-page-box-active--fixture">1</div>
+  <div class="search-pagination-page-box--fixture">2</div>
+  <button id="next"><div class="search-pagination-arrow-right--fixture"></div></button>
+</div>
+<script>
+window.__xianyuNativeCapture = { sequence: 1, entries: [] };
+window.clicks = 0;
+document.getElementById('next').onclick = () => {
+  window.clicks++;
+  const pages = document.querySelectorAll('[class*="search-pagination-page-box--"]');
+  pages[0].className = 'search-pagination-page-box--fixture';
+  pages[1].className += ' search-pagination-page-box-active--fixture';
+  document.getElementById('next').disabled = true;
+  window.__xianyuNativeCapture.entries.push({ url: 'https://example.com/idlemtopsearch.pc.search', sequence: ++window.__xianyuNativeCapture.sequence, body: { data: { resultList: [] } } });
+};
+</script>
+</body></html>

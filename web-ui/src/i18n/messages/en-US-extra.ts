@@ -6,6 +6,9 @@ const enUSExtra = {
     test: 'Test Windows notification',
   },
   nativeBrowser: {
+    memoryLimit: 'Collection memory budget per task', saveMemory: 'Save', memorySaved: 'Saved',
+    memoryHelp: 'Default: 2 GB. Details, sellers and pagination share the budget. Available memory admits parallel collection. Usage estimates JS heap plus reserved window overhead; ordinary Chrome cannot enforce a strict per-task process memory cap. Changes apply when saved; lowering the budget pauses new windows while existing collection completes.',
+    memoryUsage: '{windows} collection windows · estimated {used} / {limit} MB',
     title: 'Chrome Collection',
     description: 'Use ordinary local Chrome and the collector extension with your existing login.',
     requiresNative: 'Start with start-windows.ps1 or set SCRAPER_BACKEND=native_chrome.',

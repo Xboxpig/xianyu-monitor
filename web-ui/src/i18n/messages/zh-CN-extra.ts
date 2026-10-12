@@ -6,6 +6,9 @@ const zhCNExtra = {
     test: '测试 Windows 通知',
   },
   nativeBrowser: {
+    memoryLimit: '每个任务的采集内存预算', saveMemory: '保存', memorySaved: '已保存',
+    memoryHelp: '默认 2 GB。详情、卖家与翻页共享预算，空闲额度自动用于并行采集。按页面 JS 内存和窗口预留开销估算，普通 Chrome 无法提供严格的任务进程内存上限。保存后生效；降低预算会暂停新增窗口，已有采集继续完成。',
+    memoryUsage: '{windows} 个采集窗口 · 估算 {used} / {limit} MB',
     title: 'Chrome 采集',
     description: '使用本机普通 Chrome 和采集扩展，保留当前浏览器的登录状态。',
     requiresNative: '请使用 start-windows.ps1 启动 Windows 版，或设置 SCRAPER_BACKEND=native_chrome。',

@@ -7,6 +7,7 @@ from src.infrastructure.config.env_manager import env_manager
 
 
 _SETTINGS_ENV_KEYS = [
+    "BROWSER_TASK_MEMORY_MB",
     "ACCOUNT_ROTATION_ENABLED",
     "ACCOUNT_ROTATION_MODE",
     "ACCOUNT_ROTATION_RETRY_LIMIT",
@@ -63,6 +64,22 @@ def _clear_settings_env(monkeypatch) -> None:
     monkeypatch.setenv("WINDOWS_TOAST_ENABLED", "false")
     for key in _SETTINGS_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+
+
+def test_browser_memory_budget_defaults_persists_and_validates(tmp_path, monkeypatch):
+    _clear_settings_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    env_file = tmp_path / '.env'
+    env_file.touch()
+    monkeypatch.setattr(env_manager, 'env_file', env_file)
+    client = _build_settings_client()
+    assert client.get('/api/settings/browser').json() == {'task_memory_mb': 2048}
+    assert client.post('/api/settings/browser', json={'task_memory_mb': 4096}).json() == {'task_memory_mb': 4096}
+    assert 'BROWSER_TASK_MEMORY_MB=4096' in env_file.read_text()
+    assert client.get('/api/settings/browser').json()['task_memory_mb'] == 4096
+    for invalid in (0, 511, 1048577, 'invalid'):
+        assert client.post('/api/settings/browser', json={'task_memory_mb': invalid}).status_code == 422
+    assert client.get('/api/settings/browser').json()['task_memory_mb'] == 4096
 
 
 def test_windows_notification_switch_roundtrip_and_test(tmp_path, monkeypatch):

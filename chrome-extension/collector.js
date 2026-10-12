@@ -105,10 +105,12 @@ export function readPage(action) {
   const login = [...document.querySelectorAll('[role="dialog"]')].some(dialog => visible(dialog) && /扫码登录|请先登录|安全验证|滑动验证/.test(dialog.innerText));
   if (barrier || login) return { href: location.href, sequence: window.__xianyuNativeCapture?.sequence || 0, attention: "请在 Chrome 页面中完成登录或安全验证，页面恢复后将自动继续。" };
   const state = { entries, sequence: window.__xianyuNativeCapture?.sequence || 0,
-    href: location.href, ready: document.readyState === "complete", content: content.slice(0, 30000) };
+    href: location.href, ready: document.readyState === "complete", content: content.slice(0, 30000),
+    heapBytes: performance.memory?.usedJSHeapSize || 0 };
   if (action === "search" || action === "search_next") {
-    const activePage = document.querySelector('.ant-pagination-item-active, [aria-current="page"]');
-    state.currentPage = Number(activePage?.textContent.trim()) || null;
+    const activePage = document.querySelector('[class*="search-pagination-page-box-active"], .ant-pagination-item-active, [aria-current="page"]');
+    state.currentPage = Number(activePage?.textContent.trim()) ||
+      Number(document.querySelector('[class*="search-page-tiny-page"]')?.textContent.split('/')[0].trim()) || null;
     state.domItems = [...document.querySelectorAll('a[href*="/item?"]')].flatMap(link => {
       let url;
       try { url = new URL(link.href); } catch (_) { return []; }
@@ -128,7 +130,8 @@ export function readPage(action) {
         personal: /个人闲置/.test(card.innerText) ? true : null,
       }];
     });
-    const next = document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') ||
+    const next = document.querySelector('[class*="search-pagination-arrow-right"], [class*="search-page-tiny-arrow-right"]')?.closest('button') ||
+      document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') ||
       [...document.querySelectorAll('button, a, li')].find(element => element.textContent.trim() === "下一页");
     state.hasMore = !!next && !next.hasAttribute("disabled") && next.getAttribute("aria-disabled") !== "true" && !/disabled/.test(next.className);
     state.empty = /暂无搜索结果|没有找到相关|没有找到符合|暂无商品/.test(content);
@@ -170,7 +173,8 @@ export async function interactPage(operation, options = {}) {
     changed = true;
   };
   if (operation === "next") {
-    const next = document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') || exact("下一页");
+    const next = document.querySelector('[class*="search-pagination-arrow-right"], [class*="search-page-tiny-arrow-right"]')?.closest('button') ||
+      document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') || exact("下一页");
     if (!next || next.hasAttribute("disabled") || next.getAttribute("aria-disabled") === "true" || /disabled/.test(next.className)) return { clicked: false };
     if (window.__xianyuNativeCapture) window.__xianyuNativeCapture.entries = [];
     next.click();

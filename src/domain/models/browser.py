@@ -4,12 +4,20 @@ from pydantic import BaseModel, Field, field_validator
 from urllib.parse import urlparse
 
 
+class BrowserMemory(BaseModel):
+    run_id: str = Field(min_length=1, max_length=100)
+    slot_id: str = Field(min_length=1, max_length=100)
+    memory_mb: int = Field(ge=0, le=1_048_576)
+
+
 class BrowserClient(BaseModel):
     client_id: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_-]+$")
     name: str = Field(default="Chrome", max_length=100)
     account_state_file: str | None = Field(default=None, max_length=300)
     profile_directory: str | None = Field(default=None, max_length=100)
     version: str = Field(default="", max_length=30)
+    parallel: bool = False
+    windows: list[BrowserMemory] = Field(default_factory=list, max_length=4096)
 
 
 class BrowserItem(BaseModel):
@@ -72,6 +80,7 @@ class BrowserReport(BaseModel):
 class BrowserResume(BaseModel):
     client_id: str = Field(min_length=8, max_length=100)
     run_id: str = Field(min_length=1, max_length=100)
+    command_id: str | None = Field(default=None, max_length=100)
 
 
 class BrowserSetup(BaseModel):

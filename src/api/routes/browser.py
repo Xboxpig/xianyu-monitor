@@ -86,7 +86,7 @@ async def report(data: BrowserReport, request: Request, service=Depends(authenti
 @router.post("/resume")
 async def resume(data: BrowserResume, service=Depends(authenticated)):
     try:
-        return await service.resume(data.client_id, data.run_id)
+        return await service.resume(data.client_id, data.run_id, data.command_id)
     except PermissionError as exc:
         raise HTTPException(403, str(exc)) from exc
     except ValueError as exc:
