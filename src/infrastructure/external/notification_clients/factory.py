@@ -9,11 +9,13 @@ from .ntfy_client import NtfyClient
 from .telegram_client import TelegramClient
 from .wecom_bot_client import WeComBotClient
 from .webhook_client import WebhookClient
+from .windows_client import WindowsToastClient
 
 
 def build_notification_clients(settings: NotificationSettings):
     pcurl_to_mobile = settings.pcurl_to_mobile
     return [
+        WindowsToastClient(settings.windows_toast_enabled),
         NtfyClient(settings.ntfy_topic_url, pcurl_to_mobile=pcurl_to_mobile),
         BarkClient(settings.bark_url, pcurl_to_mobile=pcurl_to_mobile),
         GotifyClient(

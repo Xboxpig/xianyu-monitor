@@ -67,6 +67,7 @@ class AISettings(_EnvSettings):
 
 class NotificationSettings(_EnvSettings):
     """通知服务配置"""
+    windows_toast_enabled: bool = _env_field(sys.platform == "win32", "WINDOWS_TOAST_ENABLED")
     ntfy_topic_url: Optional[str] = _env_field(None, "NTFY_TOPIC_URL")
     gotify_url: Optional[str] = _env_field(None, "GOTIFY_URL")
     gotify_token: Optional[str] = _env_field(None, "GOTIFY_TOKEN")
@@ -89,6 +90,7 @@ class NotificationSettings(_EnvSettings):
     def has_any_notification_enabled(self) -> bool:
         """检查是否配置了任何通知服务"""
         return any([
+            sys.platform == "win32" and self.windows_toast_enabled,
             self.ntfy_topic_url,
             self.wx_bot_url,
             self.gotify_url and self.gotify_token,

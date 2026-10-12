@@ -2,6 +2,7 @@
 新架构的主应用入口
 整合所有路由和服务
 """
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -34,6 +35,7 @@ from src.services.ai_recovery_service import ai_recovery_service
 from src.infrastructure.persistence.sqlite_bootstrap import bootstrap_sqlite_storage
 from src.infrastructure.persistence.sqlite_task_repository import SqliteTaskRepository
 from src.infrastructure.config.settings import settings as app_settings, scraper_settings
+from src.services.windows_desktop_service import windows_desktop_service
 
 
 # 全局服务实例
@@ -90,18 +92,23 @@ async def lifespan(app: FastAPI):
 
     # 加载定时任务
     await scheduler_service.reload_jobs(tasks_list)
-    scheduler_service.start()
-
-    print("应用启动完成")
-
-    yield
-
-    # 关闭时
-    print("正在关闭应用...")
-    await ai_recovery_service.stop_all()
-    scheduler_service.stop()
-    await process_service.stop_all()
-    print("应用已关闭")
+    try:
+        if scraper_settings.backend == "native_chrome":
+            await asyncio.to_thread(windows_desktop_service.start)
+        scheduler_service.start()
+        if scraper_settings.backend == "native_chrome":
+            await windows_desktop_service.notify_startup()
+        print("应用启动完成")
+        yield
+    finally:
+        print("正在关闭应用...")
+        try:
+            await ai_recovery_service.stop_all()
+            scheduler_service.stop()
+            await process_service.stop_all()
+        finally:
+            await asyncio.to_thread(windows_desktop_service.stop)
+        print("应用已关闭")
 
 
 # 创建 FastAPI 应用

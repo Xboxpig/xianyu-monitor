@@ -71,6 +71,7 @@ def _normalize_bool_value(value: bool) -> str:
 
 class NotificationSettingsModel(BaseModel):
     """通知设置模型"""
+    WINDOWS_TOAST_ENABLED: Optional[bool] = None
 
     NTFY_TOPIC_URL: Optional[str] = None
     GOTIFY_URL: Optional[str] = None

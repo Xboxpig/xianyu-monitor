@@ -1,4 +1,10 @@
 const enUSExtra = {
+  windowsDesktop: {
+    title: 'Windows notifications',
+    description: 'Show startup, product recommendations and collection issues in the Windows notification center. Click a notification to open its page. Windows notification settings control delivery.',
+    enable: 'Enable Windows notifications',
+    test: 'Test Windows notification',
+  },
   nativeBrowser: {
     title: 'Chrome Collection',
     description: 'Use ordinary local Chrome and the collector extension with your existing login.',

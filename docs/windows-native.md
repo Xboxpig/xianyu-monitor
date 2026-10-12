@@ -18,7 +18,15 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1 -Setup
 
 脚本在 `.venv` 安装 `requirements-native.txt`，Python 依赖使用 TUNA。首次构建前端时会先测试 npm 国内镜像连通性和延迟；路由不符合项目规则时停止安装并提示检查。Windows 运行依赖不包含 Playwright，也不下载 Chromium。
 
-已有环境时运行 `.\start-windows.ps1`。前端代码更新后运行 `.\start-windows.ps1 -Build`。可用 `-Port 8001` 更换端口、`-NoBrowser` 只启动后端。服务监听 `127.0.0.1`；保持终端运行，Ctrl+C 停止服务。
+已有环境时运行 `.\start-windows.ps1`；更新到包含托盘的新版本后，先运行一次 `.\start-windows.ps1 -Setup` 安装新增依赖。前端代码更新后运行 `.\start-windows.ps1 -Build`。可用 `-Port 8001` 更换端口、`-NoBrowser` 启动后端和托盘而不打开 Chrome。服务监听 `127.0.0.1`；保持终端运行，Ctrl+C 停止服务。
+
+## Windows 托盘与通知
+
+启动时注册蓝色闪电托盘图标，以及名为“闲鱼 AutoAgent”的 Windows 通知应用。图标可能位于任务栏的隐藏图标区域。双击图标打开 Chrome 管理界面；右键菜单提供“打开管理界面”“测试 Windows 通知”和“退出”。选择“退出”会关闭后端、停止运行任务并移除图标。
+
+Windows 通知默认开启，用于启动提示、推荐商品以及需要人工处理的登录、验证码和采集异常。点击通知打开相应网页。可在蓝色界面的“系统设置 → 通知设置 → Windows 通知”中关闭、保存或测试；关闭后托盘继续运行。显示横幅和通知中心记录由“Windows 设置 → 系统 → 通知 → 闲鱼 AutoAgent”控制，勿扰模式可能隐藏横幅。
+
+启动注册同时写入当前用户的应用标识和开始菜单快捷方式，使 Windows 能识别通知来源。`.env` 中的 `WINDOWS_TOAST_ENABLED=false` 可关闭通知，`WINDOWS_TRAY_ENABLED=false` 可在无桌面测试环境中禁用托盘。
 
 ## 数据持久化
 
@@ -53,6 +61,7 @@ powershell -ExecutionPolicy Bypass -File .\start-windows.ps1 -Setup
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/unit/test_native_browser_service.py tests/integration/test_api_browser.py
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_windows_desktop.py tests/integration/test_api_settings.py
 cd chrome-extension
 npm test
 ```

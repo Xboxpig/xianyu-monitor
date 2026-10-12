@@ -1,6 +1,8 @@
 import { http } from '@/lib/http'
 
 export interface NotificationSettings {
+  WINDOWS_TOAST_ENABLED?: boolean
+  WINDOWS_SUPPORTED?: boolean
   NTFY_TOPIC_URL?: string
   GOTIFY_URL?: string
   GOTIFY_TOKEN?: string
@@ -26,6 +28,7 @@ export interface NotificationSettings {
 }
 
 export interface NotificationSettingsUpdate {
+  WINDOWS_TOAST_ENABLED?: boolean
   NTFY_TOPIC_URL?: string | null
   GOTIFY_URL?: string | null
   GOTIFY_TOKEN?: string | null

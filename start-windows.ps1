@@ -51,12 +51,9 @@ if ($Build -or -not (Test-Path -LiteralPath 'dist\index.html')) {
     Push-Location -LiteralPath 'web-ui'
     try { Invoke-Checked 'npm.cmd' @('run', 'build') } finally { Pop-Location }
 }
-if (-not $NoBrowser) {
-    Invoke-Checked $pythonExe @('-c', 'from src.services.native_chrome_launcher import find_chrome; find_chrome()')
-    # Wait for the server before opening the interactive Chrome control page.
-    Start-Process -FilePath $pythonExe -ArgumentList @('-m', 'src.services.native_chrome_launcher', '--wait-url', "http://127.0.0.1:$Port/settings?tab=browser") -WorkingDirectory $PSScriptRoot -WindowStyle Hidden
-}
 Write-Host "Native Chrome backend: http://127.0.0.1:$Port"
 Write-Host "Database: $env:APP_DATABASE_FILE"
-Write-Host 'Keep this terminal running. Press Ctrl+C to stop the backend and its tasks.'
-Invoke-Checked $pythonExe @('-m', 'uvicorn', 'src.app:app', '--host', '127.0.0.1', '--port', "$Port")
+Write-Host 'Use the Windows tray menu to open the dashboard or exit. Ctrl+C also stops the backend.'
+$launchArguments = @('-m', 'src.services.windows_desktop_launcher', '--port', "$Port")
+if ($NoBrowser) { $launchArguments += '--no-browser' }
+Invoke-Checked $pythonExe $launchArguments

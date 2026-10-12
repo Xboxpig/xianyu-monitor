@@ -79,6 +79,11 @@ def test_collection_lifecycle_and_duplicate_delivery(tmp_path, monkeypatch, samp
 
 
 def test_login_pause_requires_explicit_resume_and_rejects_foreign_client(tmp_path, monkeypatch, sample_task_payload):
+    from src.services import native_browser_service as module
+    notices = []
+    async def notify(*args):
+        notices.append(args)
+    monkeypatch.setattr(module.windows_desktop_service, 'notify_attention', notify)
     service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
 
     async def scenario():
@@ -89,6 +94,8 @@ def test_login_pause_requires_explicit_resume_and_rejects_foreign_client(tmp_pat
         with pytest.raises(PermissionError):
             await service.report(report_for(command, client_id="other-client-1"))
         await service.report(report_for(command, outcome="attention", message="login required"))
+        await service.report(report_for(command, outcome="attention", message="login required"))
+        assert len(notices) == 1
         assert (await service.poll(client))["command"] is None
         assert service.is_running(1)
         await service.resume(client.client_id, command["run_id"])

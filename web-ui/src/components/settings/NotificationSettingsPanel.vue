@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import type { NotificationSettings, NotificationSettingsUpdate, NotificationTestResponse } from '@/api/settings'
 
-type ChannelKey = 'ntfy' | 'bark' | 'gotify' | 'wecom' | 'telegram' | 'webhook'
+type ChannelKey = 'windows' | 'ntfy' | 'bark' | 'gotify' | 'wecom' | 'telegram' | 'webhook'
 
 const props = defineProps<{
   settings: NotificationSettings
@@ -39,6 +39,7 @@ const mutableClearedFields = clearedFields as Record<string, boolean>
 
 const secretFields = ['BARK_URL', 'GOTIFY_TOKEN', 'WX_BOT_URL', 'TELEGRAM_BOT_TOKEN', 'WEBHOOK_URL', 'WEBHOOK_HEADERS'] as const
 const channelFields: Record<ChannelKey, (keyof NotificationSettingsUpdate)[]> = {
+  windows: ['WINDOWS_TOAST_ENABLED'],
   ntfy: ['NTFY_TOPIC_URL'],
   bark: ['BARK_URL'],
   gotify: ['GOTIFY_URL', 'GOTIFY_TOKEN'],
@@ -48,6 +49,7 @@ const channelFields: Record<ChannelKey, (keyof NotificationSettingsUpdate)[]> = 
 }
 
 function syncFromSettings(settings: NotificationSettings) {
+  initialValues.WINDOWS_TOAST_ENABLED = settings.WINDOWS_TOAST_ENABLED ?? false
   initialValues.NTFY_TOPIC_URL = settings.NTFY_TOPIC_URL ?? ''
   initialValues.GOTIFY_URL = settings.GOTIFY_URL ?? ''
   initialValues.TELEGRAM_CHAT_ID = settings.TELEGRAM_CHAT_ID ?? ''
@@ -159,6 +161,9 @@ function buildScopedPayload(channel?: ChannelKey): NotificationSettingsUpdate {
   if ((!includedFields || includedFields.has('PCURL_TO_MOBILE')) && form.PCURL_TO_MOBILE !== initialValues.PCURL_TO_MOBILE) {
     payload.PCURL_TO_MOBILE = !!form.PCURL_TO_MOBILE
   }
+  if ((!includedFields || includedFields.has('WINDOWS_TOAST_ENABLED')) && form.WINDOWS_TOAST_ENABLED !== initialValues.WINDOWS_TOAST_ENABLED) {
+    payload.WINDOWS_TOAST_ENABLED = !!form.WINDOWS_TOAST_ENABLED
+  }
   return payload
 }
 
@@ -237,6 +242,22 @@ function resolveChannelBadge(channel: ChannelKey) {
     </div>
 
     <div v-else class="grid gap-4">
+      <Card v-if="settings.WINDOWS_SUPPORTED" class="app-surface-subtle overflow-hidden border-l-4 border-l-blue-500">
+        <CardHeader>
+          <CardTitle>{{ t('windowsDesktop.title') }}</CardTitle>
+          <CardDescription>{{ t('windowsDesktop.description') }}</CardDescription>
+        </CardHeader>
+        <CardContent class="flex items-center justify-between gap-4">
+          <Label for="windows-toast-enabled">{{ t('windowsDesktop.enable') }}</Label>
+          <Switch id="windows-toast-enabled" :model-value="!!form.WINDOWS_TOAST_ENABLED" @update:model-value="(value) => form.WINDOWS_TOAST_ENABLED = !!value" />
+        </CardContent>
+        <CardFooter class="flex flex-wrap items-center justify-between gap-3">
+          <Badge :variant="isChannelConfigured('windows') ? 'default' : 'outline'">{{ resolveChannelBadge('windows') }}</Badge>
+          <Button variant="outline" :disabled="props.isSaving || testingChannel === 'windows' || !form.WINDOWS_TOAST_ENABLED" @click="handleTest('windows')">
+            <TestTube2 class="h-4 w-4" />{{ t('windowsDesktop.test') }}
+          </Button>
+        </CardFooter>
+      </Card>
       <Card class="app-surface-subtle overflow-hidden border-l-4 border-l-sky-500">
         <CardHeader><CardTitle class="flex items-center gap-2"><Radio class="h-4 w-4 text-sky-600" /> Ntfy</CardTitle><CardDescription>{{ t('notifyPanel.ntfy.description') }}</CardDescription></CardHeader>
         <CardContent><Label>Ntfy Topic URL</Label><Input :model-value="form.NTFY_TOPIC_URL ?? ''" placeholder="https://ntfy.sh/topic" @update:model-value="(value) => updateField('NTFY_TOPIC_URL', String(value))" /></CardContent>
@@ -301,7 +322,7 @@ function resolveChannelBadge(channel: ChannelKey) {
         <CardFooter class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><Badge :variant="isChannelConfigured('webhook') ? 'default' : 'outline'">{{ resolveChannelBadge('webhook') }}</Badge><div class="flex flex-wrap gap-2"><Button variant="ghost" size="sm" :disabled="props.isSaving" @click="clearChannel('webhook')"><Trash2 class="h-4 w-4" />{{ t('notifyPanel.clear') }}</Button><Button variant="outline" size="sm" :disabled="props.isSaving" @click="handleTest('webhook')"><TestTube2 class="h-4 w-4" />{{ t('notifyPanel.test') }}</Button></div></CardFooter>
       </Card>
 
-      <div v-for="channel in ['ntfy', 'bark', 'gotify', 'wecom', 'telegram', 'webhook']" :key="channel">
+      <div v-for="channel in ['windows', 'ntfy', 'bark', 'gotify', 'wecom', 'telegram', 'webhook']" :key="channel">
         <div v-if="testResults[channel]" class="rounded-2xl border px-4 py-3 text-sm" :class="resultClass(channel as ChannelKey)">
           {{ testResults[channel].label }}：{{ testResults[channel].message }}
         </div>

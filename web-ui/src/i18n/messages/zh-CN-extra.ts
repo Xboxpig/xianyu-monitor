@@ -1,4 +1,10 @@
 const zhCNExtra = {
+  windowsDesktop: {
+    title: 'Windows 通知',
+    description: '使用 Windows 通知中心显示启动提示、推荐商品和需要人工处理的采集异常。点击通知可打开对应页面；显示方式遵循 Windows 的通知设置。',
+    enable: '启用 Windows 通知',
+    test: '测试 Windows 通知',
+  },
   nativeBrowser: {
     title: 'Chrome 采集',
     description: '使用本机普通 Chrome 和采集扩展，保留当前浏览器的登录状态。',

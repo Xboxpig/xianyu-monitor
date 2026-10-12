@@ -20,6 +20,7 @@ from src.services.native_result_processor import NativeResultProcessor
 from src.services.process_service import TaskStartError
 from src.services.result_storage_service import load_processed_link_keys
 from src.utils import build_task_log_path
+from src.services.windows_desktop_service import windows_desktop_service
 
 CLIENT_TIMEOUT = 90
 COMMAND_TIMEOUT = 180
@@ -207,11 +208,16 @@ class NativeBrowserService:
             if not run.command or run.command["command_id"] != report.command_id:
                 raise ValueError("Stale command.")
             if report.outcome == "attention":
-                run.waiting = report.message or "请在 Chrome 中完成登录或验证，然后点击扩展中的继续。"
+                message = report.message or "请在 Chrome 中完成登录或验证，然后点击扩展中的继续。"
+                changed = run.waiting != message
+                run.waiting = message
                 self._log(run, "[Chrome] 等待人工处理：" + run.waiting)
+                if changed:
+                    await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)
                 return {"accepted": True}
             if report.outcome == "error":
                 self._log(run, "[Chrome] 采集失败：" + report.message)
+                await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, report.message)
                 await self._finish(run, failed=True)
                 self.history.append((report.run_id, report.command_id, report.client_id))
                 return {"accepted": True}
@@ -366,6 +372,7 @@ class NativeBrowserService:
                         run.waiting = "页面采集超时。请检查 Chrome 中的页面，然后点击继续。"
                     if run.waiting:
                         self._log(run, "[Chrome] " + run.waiting)
+                        await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)
 
     async def stop_all(self):
         for task_id in tuple(self.processes):

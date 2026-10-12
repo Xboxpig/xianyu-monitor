@@ -25,6 +25,12 @@ def run_app() -> None:
     """启动 FastAPI 应用并自动打开浏览器"""
     _prepare_environment()
 
+    if sys.platform == "win32":
+        os.environ.setdefault("SCRAPER_BACKEND", "native_chrome")
+        from src.services.windows_desktop_launcher import main
+        main()
+        return
+
     from src.app import app
     from src.infrastructure.config.settings import settings
 

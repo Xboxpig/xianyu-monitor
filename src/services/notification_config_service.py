@@ -2,6 +2,7 @@
 通知配置读写与校验服务
 """
 import json
+import sys
 from urllib.parse import urlparse
 
 from src.infrastructure.config.env_manager import env_manager
@@ -12,6 +13,7 @@ from src.infrastructure.config.settings import (
 
 
 NOTIFICATION_FIELD_MAP = {
+    "WINDOWS_TOAST_ENABLED": "windows_toast_enabled",
     "NTFY_TOPIC_URL": "ntfy_topic_url",
     "GOTIFY_URL": "gotify_url",
     "GOTIFY_TOKEN": "gotify_token",
@@ -30,6 +32,7 @@ NOTIFICATION_FIELD_MAP = {
 }
 
 CHANNEL_NOTIFICATION_FIELDS = {
+    "windows": {"WINDOWS_TOAST_ENABLED"},
     "ntfy": {"NTFY_TOPIC_URL"},
     "bark": {"BARK_URL"},
     "gotify": {"GOTIFY_URL", "GOTIFY_TOKEN"},
@@ -92,6 +95,8 @@ def build_notification_settings_response(
 ) -> dict:
     notification_settings = settings or load_notification_settings()
     response = {
+        "WINDOWS_TOAST_ENABLED": notification_settings.windows_toast_enabled,
+        "WINDOWS_SUPPORTED": sys.platform == "win32",
         "NTFY_TOPIC_URL": notification_settings.ntfy_topic_url or "",
         "GOTIFY_URL": notification_settings.gotify_url or "",
         "GOTIFY_TOKEN": "",
@@ -124,6 +129,7 @@ def build_notification_status_flags(
     notification_settings = settings or load_notification_settings()
     return {
         "ntfy_topic_url_set": bool(notification_settings.ntfy_topic_url),
+        "windows_toast_enabled": sys.platform == "win32" and notification_settings.windows_toast_enabled,
         "gotify_url_set": bool(notification_settings.gotify_url),
         "gotify_token_set": bool(notification_settings.gotify_token),
         "bark_url_set": bool(notification_settings.bark_url),
@@ -140,6 +146,8 @@ def build_configured_channels(
 ) -> list[str]:
     notification_settings = settings or load_notification_settings()
     channels = []
+    if sys.platform == "win32" and notification_settings.windows_toast_enabled:
+        channels.append("windows")
     if notification_settings.ntfy_topic_url:
         channels.append("ntfy")
     if notification_settings.bark_url:
@@ -241,6 +249,7 @@ def _build_channel_test_values(
     values["webhook_method"] = "POST"
     values["webhook_content_type"] = "JSON"
     values["pcurl_to_mobile"] = True
+    values["windows_toast_enabled"] = False
 
     for env_name in included_env_fields:
         attr_name = NOTIFICATION_FIELD_MAP[env_name]
@@ -252,6 +261,7 @@ def _build_channel_test_values(
 def load_notification_settings() -> NotificationSettings:
     return _build_notification_settings_model(
         {
+            "windows_toast_enabled": _env_bool(env_manager.get_value("WINDOWS_TOAST_ENABLED"), sys.platform == "win32"),
             "ntfy_topic_url": _normalize_existing_text(env_manager.get_value("NTFY_TOPIC_URL")),
             "gotify_url": _normalize_existing_text(env_manager.get_value("GOTIFY_URL")),
             "gotify_token": _normalize_existing_text(env_manager.get_value("GOTIFY_TOKEN")),
@@ -281,7 +291,7 @@ def _build_notification_settings_model(values: dict) -> NotificationSettings:
 
 
 def _normalize_patch_value(env_name: str, value):
-    if env_name == "PCURL_TO_MOBILE":
+    if env_name in {"PCURL_TO_MOBILE", "WINDOWS_TOAST_ENABLED"}:
         return bool(value)
     if value is None:
         return None

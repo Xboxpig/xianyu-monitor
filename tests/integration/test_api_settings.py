@@ -60,8 +60,30 @@ def _build_settings_client() -> TestClient:
 
 
 def _clear_settings_env(monkeypatch) -> None:
+    monkeypatch.setenv("WINDOWS_TOAST_ENABLED", "false")
     for key in _SETTINGS_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+
+
+def test_windows_notification_switch_roundtrip_and_test(tmp_path, monkeypatch):
+    import sys
+    from src.infrastructure.external.notification_clients import windows_client
+    _clear_settings_env(monkeypatch)
+    env_file = tmp_path / '.env'
+    env_file.write_text('WINDOWS_TOAST_ENABLED=false\n', encoding='utf-8')
+    monkeypatch.setattr(env_manager, 'env_file', env_file)
+    client = _build_settings_client()
+    assert client.get('/api/settings/notifications').json()['WINDOWS_SUPPORTED'] == (sys.platform == 'win32')
+    assert client.put('/api/settings/notifications', json={'WINDOWS_TOAST_ENABLED': True}).status_code == 200
+    assert client.get('/api/settings/notifications').json()['WINDOWS_TOAST_ENABLED'] is True
+    captured = []
+    monkeypatch.setattr(windows_client, 'show_toast', lambda *args, **kwargs: captured.append(args))
+    if sys.platform == 'win32':
+        response = client.post('/api/settings/notifications/test', json={'channel': 'windows', 'settings': {'WINDOWS_TOAST_ENABLED': True, 'GOTIFY_URL': 'invalid'}})
+        assert response.json()['results']['windows']['success'] is True
+        assert len(captured) == 1
+    assert client.put('/api/settings/notifications', json={'WINDOWS_TOAST_ENABLED': False}).status_code == 200
+    assert client.get('/api/settings/notifications').json()['WINDOWS_TOAST_ENABLED'] is False
 
 
 def test_ai_queue_endpoint_returns_observable_snapshot(monkeypatch):
