@@ -8,12 +8,14 @@ let failReport = false;
 let snapshot = { entries: [], domItems: [{ id: "123", title: "item", price: "10" }], hasMore: false };
 let nextClicks = 0;
 let attention = null;
+let filterResult = { personalApplied: false };
+let version = '2.0.2';
 const originalTimer = globalThis.setTimeout;
 globalThis.setTimeout = () => 1;
 const event = { addListener() {} };
 globalThis.chrome = {
   alarms: { onAlarm: event, async create() {} },
-  runtime: { onStartup: event, onInstalled: event, onMessage: event, getManifest: () => ({ version: "2.0.0" }) },
+  runtime: { onStartup: event, onInstalled: event, onMessage: event, getManifest: () => ({ version }) },
   storage: { local: {
     async get(keys) { return Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, structuredClone(storage[key])])); },
     async set(values) { Object.assign(storage, structuredClone(values)); },
@@ -36,7 +38,7 @@ globalThis.chrome = {
           body: { data: { resultList: [] } } }] };
       return [{ result: { clicked: true, sequenceFloor: 0 } }];
     }
-    return [{ result: { personalApplied: false } }];
+    return [{ result: filterResult }];
   } },
 };
 globalThis.fetch = async (url, options) => {
@@ -136,6 +138,69 @@ test('waiting task resumes only after a verified page has new usable data', asyn
   assert.equal(storage.nativeState.phase, 'read');
   assert.equal(storage.nativeState.attention, '');
   assert.deepEqual(events.findLast(event => event[0] === 'resume')[1], { client_id: 'chrome-client-1', run_id: 'waiting-run' });
+});
+
+test('ordinary filter retries preserve the final response checkpoint and do not request manual selection', async () => {
+  nextCommand = { run_id: 'filter-run', command_id: 'filter-command', action: 'search',
+    url: 'https://www.goofish.com/search?q=test', page: 1, task: { new_publish_option: '最新' } };
+  storage.nativeState = { runId: nextCommand.run_id, lastCommand: nextCommand, command: nextCommand,
+    phase: 'filters', tabs: { search: 20 }, tabKey: 'search', windowId: 10, startedAt: Date.now() };
+  snapshot = { sequence: 3, entries: [{ url: 'idlemtopsearch.pc.search', sequence: 3, body: { data: { resultList: [] } } }] };
+  filterResult = { retry: true, error: '菜单未加载', changed: true, sequenceFloor: 3 };
+  await tick();
+  assert.equal(storage.nativeState.phase, 'filters');
+  assert.equal(storage.nativeState.filterAttempts, 1);
+  assert.equal(storage.nativeState.outbox, undefined);
+  filterResult = { personalApplied: false, changed: false };
+  await tick();
+  assert.equal(storage.nativeState.phase, 'read');
+  assert.equal(storage.nativeState.searchSequenceFloor, 3);
+  await tick();
+  assert.equal(storage.nativeState.outbox, undefined, 'stale search data must not be reported');
+  snapshot.sequence = 4;
+  snapshot.entries[0].sequence = 4;
+  await tick();
+  assert.equal(storage.nativeState.outbox.outcome, 'ok');
+  await tick();
+});
+
+test('persistent filter failure is reported only after bounded automatic retries', async () => {
+  nextCommand = { run_id: 'failed-filter-run', command_id: 'failed-filter-command', action: 'search',
+    url: 'https://www.goofish.com/search?q=test', page: 1, task: { new_publish_option: '最新' } };
+  storage.nativeState = { runId: nextCommand.run_id, lastCommand: nextCommand, command: nextCommand,
+    phase: 'filters', tabs: { search: 20 }, tabKey: 'search', windowId: 10, startedAt: Date.now() };
+  filterResult = { retry: true, error: '发布时间筛选「最新」未找到菜单选项。', changed: false };
+  for (let index = 0; index < 3; index++) {
+    await tick();
+    assert.equal(storage.nativeState.outbox, undefined);
+  }
+  await tick();
+  assert.equal(storage.nativeState.outbox.outcome, 'attention');
+  assert.match(storage.nativeState.outbox.message, /扩展已自动重试/);
+  assert.doesNotMatch(storage.nativeState.outbox.message, /请在搜索页面设置/);
+  await tick();
+  filterResult = { personalApplied: false };
+});
+
+test('updating the extension resumes a filter pause without asking the user to change the page', async () => {
+  const command = { run_id: 'old-filter-run', command_id: 'old-filter-command', action: 'search',
+    url: 'https://www.goofish.com/search?q=test', page: 1, task: { new_publish_option: '最新' } };
+  nextCommand = null;
+  attention = { run_id: command.run_id, message: '请在搜索页面设置发布时间筛选：最新，然后点击继续。' };
+  snapshot = { href: command.url, sequence: 1, ready: true, entries: [], domItems: [{ id: '123', title: 'item', price: '10' }] };
+  storage.nativeState = { runId: command.run_id, lastCommand: command, command: null, phase: 'filters',
+    collectorVersion: '2.0.0', filterAttempts: 4, tabs: { search: 20 }, tabKey: 'search', windowId: 10,
+    attentionCheckpoint: pageCheckpoint(snapshot) };
+  const before = events.filter(event => event[0] === 'resume').length;
+  snapshot.attention = 'login required';
+  await tick();
+  assert.equal(events.filter(event => event[0] === 'resume').length, before);
+  snapshot.attention = null;
+  await tick();
+  assert.equal(events.filter(event => event[0] === 'resume').length, before + 1);
+  assert.equal(storage.nativeState.phase, 'filters');
+  assert.equal(storage.nativeState.filterAttempts, 0);
+  assert.equal(storage.nativeState.collectorVersion, version);
 });
 
 test.after(() => { globalThis.setTimeout = originalTimer; });

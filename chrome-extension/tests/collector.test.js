@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parseSearch, parseDetail, parseSeller, collectSnapshot, readPage } from "../collector.js";
+import { parseSearch, parseDetail, parseSeller, collectSnapshot, readPage, interactPage } from "../collector.js";
 
 test("search response preserves price, tags, seller and publication time", () => {
   const fixture = JSON.parse(readFileSync(new URL("../../tests/fixtures/search_results.json", import.meta.url)));
@@ -69,4 +69,99 @@ test('cleared verification and newer successful responses stop blocking a page',
     window.__xianyuNativeCapture.entries.pop();
     assert.ok(readPage('seller').attention);
   } finally { for (const [key, value] of Object.entries(saved)) globalThis[key] = value; }
+});
+
+async function withFilterPage(run) {
+  const keys = ['window', 'document', 'getComputedStyle', 'setTimeout', 'MouseEvent'];
+  const saved = Object.fromEntries(keys.map(key => [key, globalThis[key]]));
+  const nodes = [];
+  const page = { elapsed: 0, advance: () => {}, nodes, capture: { sequence: 3, entries: [] } };
+  page.add = (text, settings = {}) => {
+    const element = {
+      textContent: text, className: '', children: [], parentElement: null,
+      getClientRects: () => element.hidden ? [] : [1],
+      getAttribute: name => element.attributes?.[name] || null,
+      querySelector: () => null, closest: () => null,
+      click: () => {}, dispatchEvent: () => {}, ...settings,
+    };
+    nodes.push(element);
+    return element;
+  };
+  globalThis.window = { __xianyuNativeCapture: page.capture };
+  globalThis.document = { querySelectorAll: selector => nodes.filter(node =>
+    selector.includes('div') || node.tagName !== 'DIV') };
+  globalThis.getComputedStyle = () => ({ visibility: 'visible' });
+  globalThis.MouseEvent = class { constructor(type) { this.type = type; } };
+  globalThis.setTimeout = (callback, delay) => { page.elapsed += delay; page.advance(); callback(); };
+  try { await run(page); }
+  finally { for (const key of keys) globalThis[key] = saved[key]; }
+}
+
+test('publication filter selects div menu items after delayed rendering', async () => {
+  await withFilterPage(async page => {
+    let openedAt;
+    let clicks = 0;
+    page.add('新发布', { tagName: 'DIV', click: () => { openedAt = page.elapsed; } });
+    const option = page.add('最新', { tagName: 'DIV', hidden: true, click() { clicks++; this.className = 'selected--abc'; } });
+    // Both ancestors and the leaf match text, as in custom React dropdowns.
+    page.add('最新', { tagName: 'DIV', children: [option], click: () => assert.fail('clicked menu wrapper') });
+    page.advance = () => { if (openedAt != null && page.elapsed - openedAt >= 1000) option.hidden = false; };
+    const result = await interactPage('filters', { new_publish_option: '最新' });
+    assert.equal(result.retry, undefined);
+    assert.equal(result.changed, true);
+    assert.equal(result.sequenceFloor, 3);
+    assert.equal(clicks, 1);
+    assert.ok(page.elapsed >= 1000);
+  });
+});
+
+test('hover menus and all publication ranges are selected automatically', async () => {
+  for (const label of ['最新', '1天内', '3天内', '7天内', '14天内']) {
+    await withFilterPage(async page => {
+      const option = page.add(label, { tagName: 'DIV', hidden: true, click() { this.attributes = { 'aria-selected': 'true' }; } });
+      page.add('新发布', { tagName: 'DIV', dispatchEvent(event) { if (event.type === 'mouseover') option.hidden = false; } });
+      const result = await interactPage('filters', { new_publish_option: label });
+      assert.equal(result.retry, undefined, label);
+      assert.equal(result.changed, true, label);
+    });
+  }
+});
+
+test('selected publication filter is left in place without toggling or waiting for another response', async () => {
+  await withFilterPage(async page => {
+    page.add('最新', { tagName: 'DIV', attributes: { 'aria-selected': 'true' }, click: () => assert.fail('already selected') });
+    const result = await interactPage('filters', { new_publish_option: '最新' });
+    assert.equal(result.changed, false);
+    assert.equal(page.elapsed, 0);
+  });
+});
+
+test('missing or ineffective publication controls request automatic retry', async () => {
+  for (const ineffective of [false, true]) {
+    await withFilterPage(async page => {
+      if (ineffective) {
+        page.add('新发布', { tagName: 'DIV' });
+        page.add('最新', { tagName: 'DIV' });
+      }
+      const result = await interactPage('filters', { new_publish_option: '最新' });
+      assert.equal(result.retry, true);
+      assert.equal(result.attention, undefined);
+      assert.match(result.error, /未找到菜单入口|未确认筛选生效/);
+    });
+  }
+});
+
+test('the final filter response must be newer than earlier checkbox responses', async () => {
+  await withFilterPage(async page => {
+    page.add('个人闲置', { click() { this.className = 'checked'; page.capture.sequence = 4; } });
+    page.add('新发布');
+    page.add('最新', { tagName: 'DIV', click() {
+      page.capture.sequence = 5;
+      page.capture.entries.push({ url: 'idlemtopsearch.pc.search', sequence: 5, body: { ret: ['SUCCESS::OK'] } });
+    } });
+    const result = await interactPage('filters', { personal_only: true, new_publish_option: '最新' });
+    assert.equal(result.retry, undefined);
+    assert.equal(result.personalApplied, true);
+    assert.equal(result.sequenceFloor, 4);
+  });
 });

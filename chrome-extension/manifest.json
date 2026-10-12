@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Xianyu Native Chrome Collector",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "minimum_chrome_version": "120",
   "description": "Collect Xianyu pages using your logged-in Chrome profile",
   "permissions": [

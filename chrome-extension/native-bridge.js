@@ -78,7 +78,9 @@ async function resumeWhenReady(state, attention) {
   if (!snapshot?.ready || snapshot.attention) return;
   const result = collectSnapshot(snapshot, command);
   if (result?.outcome !== 'ok') return;
-  if (!attention.message.includes('扩展已断开') && pageCheckpoint(snapshot) === state.attentionCheckpoint) return;
+  const updatedFilters = state.phase === 'filters' && attention.message.includes('发布时间筛选') &&
+    state.collectorVersion !== chrome.runtime.getManifest().version;
+  if (!updatedFilters && !attention.message.includes('扩展已断开') && pageCheckpoint(snapshot) === state.attentionCheckpoint) return;
   await resume();
 }
 
@@ -183,13 +185,23 @@ async function collectStep(state) {
   }
   if (state.phase === "filters") {
     const result = await execute(tabId, interactPage, ["filters", command.task]);
+    if (result?.changed) state.searchSequenceFloor = result.sequenceFloor;
+    if (result?.retry) {
+      state.filterAttempts = (state.filterAttempts || 0) + 1;
+      if (state.filterAttempts < 4) {
+        await save(state);
+      } else {
+        await queueReport(state, { outcome: "attention", message: result.error + "扩展已自动重试，请重新加载扩展并重启任务。" });
+      }
+      return;
+    }
     if (result?.attention) {
       await queueReport(state, { outcome: "attention", message: result.attention });
       return;
     }
     state.personalApplied = !!result?.personalApplied;
     state.regionApplied = !!result?.regionApplied;
-    state.searchSequenceFloor = result?.changed ? result.sequenceFloor : null;
+    state.searchSequenceFloor ??= null;
     state.phase = "read";
     state.reads = 0;
     await save(state);
@@ -306,6 +318,8 @@ export async function tick() {
       state.unchanged = 0;
       state.previousCount = -1;
       if (!keepCheckpoint) state.searchSequenceFloor = null;
+      if (!keepCheckpoint) state.filterAttempts = 0;
+      state.collectorVersion = chrome.runtime.getManifest().version;
       state.attention = "";
       await save(state);
     }
@@ -331,9 +345,11 @@ async function resume() {
   }
   await request(config, "resume", { client_id: config.client_id, run_id: runId });
   if (state) {
-    // Keep tabs so manual login and filters survive the resume.
+    // Preserve the page and pending interaction after login or an extension update.
     state.command = null;
     state.attention = "";
+    state.collectorVersion = chrome.runtime.getManifest().version;
+    if (state.phase === "filters") state.filterAttempts = 0;
     try {
       await chrome.tabs.get(state.tabs?.[state.tabKey]);
     } catch (_) {

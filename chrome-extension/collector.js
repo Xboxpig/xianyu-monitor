@@ -152,12 +152,30 @@ export function readPage(action) {
 export async function interactPage(operation, options = {}) {
   const settle = () => new Promise(resolve => setTimeout(resolve, 250));
   let changed = false;
-  const sequenceFloor = window.__xianyuNativeCapture?.sequence || 0;
-  const elements = () => [...document.querySelectorAll('button, a, li, label, [role="checkbox"], [role="button"], span')];
-  const exact = label => elements().find(element => element.textContent.trim() === label && element.getClientRects().length);
+  let sequenceFloor = window.__xianyuNativeCapture?.sequence || 0;
+  const elements = () => [...document.querySelectorAll('button, a, li, label, [role="checkbox"], [role="button"], [role="option"], span, div')];
+  const visible = element => element.getClientRects().length && getComputedStyle(element).visibility !== "hidden";
+  // The site's custom dropdown uses divs. Prefer the innermost text match so
+  // an enclosing panel with the same text is never clicked instead of its item.
+  const exact = label => elements().filter(element => element.textContent.trim() === label && visible(element))
+    .find(element => ![...element.children].some(child => child.textContent.trim() === label));
   const selected = element => [element, element.parentElement, element.closest("label")].filter(Boolean).some(node =>
-    node.getAttribute("aria-checked") === "true" || node.querySelector('input:checked') ||
+    node.getAttribute("aria-checked") === "true" || node.getAttribute("aria-selected") === "true" || node.querySelector('input:checked') ||
     /(^|[-_ ])(checked|selected|active)([-_ ]|$)/i.test(node.className));
+  const waitFor = async predicate => {
+    for (let attempt = 0; attempt < 13; attempt++) {
+      const result = predicate();
+      if (result) return result;
+      if (attempt < 12) await settle();
+    }
+    return null;
+  };
+  const clickFilter = element => {
+    // Only responses after the last filter change can represent all filters.
+    sequenceFloor = window.__xianyuNativeCapture?.sequence || 0;
+    element.click();
+    changed = true;
+  };
   if (operation === "next") {
     const next = document.querySelector('[title="下一页"], [aria-label="下一页"], .ant-pagination-next') || exact("下一页");
     if (!next || next.hasAttribute("disabled") || next.getAttribute("aria-disabled") === "true" || /disabled/.test(next.className)) return { clicked: false };
@@ -167,15 +185,40 @@ export async function interactPage(operation, options = {}) {
   }
   if (operation === "filters") {
     const personal = exact("个人闲置") || exact("个人卖家");
-    if (options.personal_only && personal && !selected(personal)) { personal.click(); changed = true; await settle(); }
+    if (options.personal_only && personal && !selected(personal)) { clickFilter(personal); await settle(); }
     const freeShipping = exact("包邮");
-    if (options.free_shipping && freeShipping && !selected(freeShipping)) { freeShipping.click(); changed = true; await settle(); }
+    if (options.free_shipping && freeShipping && !selected(freeShipping)) { clickFilter(freeShipping); await settle(); }
     if (options.new_publish_option) {
-      const trigger = exact("新发布");
-      if (trigger) { trigger.click(); await settle(); }
-      const option = exact(options.new_publish_option);
-      if (!option) return { attention: "请在搜索页面设置发布时间筛选：" + options.new_publish_option + "，页面数据恢复后将自动继续。" };
-      if (!selected(option)) { option.click(); changed = true; await settle(); }
+      const label = options.new_publish_option;
+      const retry = error => ({ retry: true, error: "发布时间筛选「" + label + "」" + error, changed, sequenceFloor });
+      let option = exact(label);
+      if (!option || !selected(option)) {
+        const trigger = await waitFor(() => exact("新发布"));
+        if (!trigger && !option) return retry("未找到菜单入口。");
+        if (trigger) {
+          trigger.click();
+          option = await waitFor(() => exact(label));
+          if (!option) {
+            // Some dropdown revisions open on hover rather than click.
+            for (const node of [trigger, trigger.parentElement].filter(Boolean)) {
+              node.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+              node.dispatchEvent(new MouseEvent("mouseenter"));
+            }
+            option = await waitFor(() => exact(label));
+          }
+        }
+        if (!option) return retry("未找到菜单选项。");
+        if (!selected(option)) {
+          clickFilter(option);
+          const applied = await waitFor(() => {
+            const current = exact(label);
+            return (current && selected(current)) || (window.__xianyuNativeCapture?.entries || []).some(entry =>
+              entry.url.includes("idlemtopsearch.pc.search") && entry.sequence > sequenceFloor &&
+              entry.body?.ret?.some(value => value.startsWith("SUCCESS")));
+          });
+          if (!applied) return retry("未确认筛选生效。");
+        }
+      }
     }
     let regionApplied = false;
     if (options.region) {
@@ -192,8 +235,7 @@ export async function interactPage(operation, options = {}) {
       }
       const apply = elements().find(element => /^查看\d+件宝贝$/.test(element.textContent.trim()) && element.getClientRects().length);
       if (!apply) return { attention: "未找到区域筛选的提交按钮，请检查页面。" };
-      apply.click();
-      changed = true;
+      clickFilter(apply);
       await settle();
       regionApplied = true;
     }
