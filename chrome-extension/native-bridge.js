@@ -44,7 +44,7 @@ async function closeOwnedTabs(state) {
 }
 
 async function showAttention(state, message, needsVerification = false) {
-  if (needsVerification && (state.attention !== message || !state.verificationShown)) {
+  if (needsVerification && !state.verificationShown) {
     try { await chrome.windows.update(state.windowId, { state: "normal", focused: true }); } catch (_) {}
     const id = state.tabs?.[state.tabKey];
     if (id) { try { await chrome.tabs.update(id, { active: true }); } catch (_) {} }
@@ -54,10 +54,12 @@ async function showAttention(state, message, needsVerification = false) {
   await save(state);
 }
 
-async function hideVerificationWindow(state) {
+async function hideVerificationWindow(state, jobs = []) {
   if (!state.verificationShown) return;
-  try { await chrome.windows.update(state.windowId, { state: 'minimized', focused: false }); } catch (_) {}
   state.verificationShown = false;
+  // Several paused pages can share a window. Leave it visible until all are ready.
+  if (jobs.some(peer => peer !== state && peer.windowId === state.windowId && peer.verificationShown)) return;
+  try { await chrome.windows.update(state.windowId, { state: 'minimized', focused: false }); } catch (_) {}
 }
 
 async function execute(tabId, func, args) {
@@ -71,7 +73,7 @@ export function pageCheckpoint(snapshot) {
     snapshot.nextPageState, snapshot.totalPages, snapshot.searchLoading]);
 }
 
-async function resumeWhenReady(state, attention) {
+async function resumeWhenReady(state, attention, jobs = []) {
   const command = state.lastCommand;
   if (!command || command.run_id !== attention.run_id) return;
   let tab;
@@ -93,7 +95,7 @@ async function resumeWhenReady(state, attention) {
   if (state.slotId) {
     const { nativeConfig: config } = await chrome.storage.local.get('nativeConfig');
     await request(config, 'resume', { client_id: config.client_id, run_id: attention.run_id, command_id: attention.command_id });
-    await hideVerificationWindow(state);
+    await hideVerificationWindow(state, jobs);
     state.attention = '';
     state.command = null;
     state.collectorVersion = chrome.runtime.getManifest().version;
@@ -102,7 +104,7 @@ async function resumeWhenReady(state, attention) {
   } else await resume();
 }
 
-async function ensureTab(state, command) {
+async function ensureTab(state, command, collectionHost) {
   const target = new URL(command.url);
   const expectedPath = command.action === "detail" ? "/item" : command.action === "seller" ? "/personal" : "/search";
   if (target.protocol !== "https:" || target.hostname !== "www.goofish.com" || target.pathname !== expectedPath) {
@@ -122,12 +124,23 @@ async function ensureTab(state, command) {
   if (!tab) {
     let window;
     try { window = await chrome.windows.get(state.windowId); } catch (_) {}
+    if (!window && collectionHost && !command.action.startsWith('search')) {
+      try {
+        const anchor = await chrome.tabs.get(collectionHost.tabs?.[collectionHost.tabKey]);
+        const host = await chrome.windows.get(collectionHost.windowId);
+        const url = new URL(anchor.url);
+        // Reuse only our background search window, never a window the user took over.
+        if (anchor.windowId === host.id && host.state === 'minimized' &&
+            url.hostname === 'www.goofish.com' && url.pathname === '/search') window = host;
+      } catch (_) {}
+    }
     if (!window) {
       window = await chrome.windows.create({ url: command.url, state: "minimized", focused: false });
       state.windowId = window.id;
       tab = window.tabs[0];
     } else {
       tab = await chrome.tabs.create({ windowId: window.id, url: command.url, active: false });
+      state.windowId = window.id;
     }
     state.tabs[state.tabKey] = tab.id;
     if (command.action.startsWith('search')) {
@@ -141,10 +154,10 @@ async function ensureTab(state, command) {
   return tab.id;
 }
 
-async function collectStep(state) {
+async function collectStep(state, collectionHost) {
   const command = state.command;
   if (state.phase === "navigate") {
-    await ensureTab(state, command);
+    await ensureTab(state, command, collectionHost);
     state.phase = "load";
     await save(state);
     return;
@@ -505,9 +518,9 @@ export async function tick() {
       const attention = attentions.find(a => a.command_id === state.lastCommand?.command_id);
       if (attention) {
         await showAttention(state, attention.message, attention.needs_verification);
-        await resumeWhenReady(state, attention);
+        await resumeWhenReady(state, attention, Object.values(jobs));
       } else if (state.command && liveIds.has(state.command.command_id)) {
-        await collectStep(state);
+        await collectStep(state, jobs.search);
       }
     }));
     const stepError = steps.find(result => result.status === 'rejected');

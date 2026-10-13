@@ -43,6 +43,12 @@ globalThis.chrome = {
   },
   tabs: {
     async get(id) { if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
+    async create(options) {
+      windowEvents.push({ operation: 'createTab', ...options });
+      const tab = { ...options, id: serial++, status: 'complete' };
+      tabs.set(tab.id, tab);
+      return tab;
+    },
     async update(id, options) { Object.assign(tabs.get(id), options); },
     async remove(id) { tabs.delete(id); },
     async reload() {},
@@ -200,7 +206,7 @@ test('a backend delay releases the detail window and the seller starts only when
 
 test('the search window keeps its profile open through final-page delays and closes after collection', async () => {
   activeRun = 'run'; attentions = []; keepSearch = true;
-  const searchWindow = await chrome.windows.create({ url: 'https://www.goofish.com/search?q=test' });
+  const searchWindow = await chrome.windows.create({ url: 'https://www.goofish.com/search?q=test', state: 'minimized', focused: false });
   storage.nativeParallelState = { slots: ['search'] };
   storage['nativeJob:search'] = { slotId: 'search', runId: 'run', windowId: searchWindow.id,
     tabs: { search: searchWindow.tabs[0].id }, tabKey: 'search',
@@ -220,6 +226,74 @@ test('the search window keeps its profile open through final-page delays and clo
   await tick();
   assert.equal(tabs.size, 0);
   assert.deepEqual(storage.nativeParallelState.slots, []);
+});
+
+async function backgroundSearch() {
+  keepSearch = true;
+  const host = await chrome.windows.create({ url: 'https://www.goofish.com/search?q=test', state: 'minimized', focused: false });
+  storage.nativeParallelState = { slots: ['search'] };
+  storage['nativeJob:search'] = { slotId: 'search', runId: 'run', windowId: host.id,
+    tabs: { page: host.tabs[0].id }, tabKey: 'page',
+    lastCommand: { command_id: 'search-final', action: 'search', slot_id: 'search' } };
+  return host;
+}
+
+test('random gaps, seller collection and later items use inactive tabs without creating more native windows', async () => {
+  const host = await backgroundSearch();
+  snapshots.set(null, { ready: true, entries: [{ url: 'mtop.idle.web.user.page.head',
+    body: { data: { module: { tabs: { item: { number: 0 }, rate: { number: 0 } } } } } }] });
+  const stages = [detail('13'), { ...detail('13'), command_id: 'seller-13', action: 'seller',
+    url: 'https://www.goofish.com/personal?userId=113' }, detail('14')];
+  for (const command of stages) {
+    commands = [command];
+    await tick();
+    assert.equal(storage['nativeJob:' + command.slot_id].windowId, host.id);
+    assert.equal(tabs.size, 2);
+    for (let i = 0; i < 8; i++) await tick();
+    assert.ok(reports.some(report => report.command_id === command.command_id && report.outcome === 'ok'));
+    assert.equal(tabs.size, 1);
+    assert.equal(windows.get(host.id).state, 'minimized');
+  }
+  assert.equal(windowEvents.filter(e => e.operation === 'create').length, 1);
+  assert.equal(windowEvents.filter(e => e.operation === 'createTab').length, 3);
+  assert.ok(windowEvents.filter(e => e.operation === 'createTab').every(e => e.active === false));
+  assert.equal(windowEvents.filter(e => e.focused === true).length, 0);
+  activeRun = null;
+  await tick();
+  assert.equal(tabs.size, 0);
+});
+
+test('shared verification window stays visible until every blocked page recovers without repeated focus', async () => {
+  const host = await backgroundSearch();
+  commands = [detail('15'), detail('16')];
+  for (const command of commands) snapshots.set(new URL(command.url).searchParams.get('id'),
+    { href: command.url, ready: true, sequence: 1, attention: 'verification required' });
+  await tick(); await tick(); await tick();
+  assert.equal(windows.get(host.id).state, 'normal');
+  const focusCount = windowEvents.filter(e => e.focused === true).length;
+  for (const attention of attentions) attention.message = 'verification message changed';
+  await tick();
+  assert.equal(windowEvents.filter(e => e.focused === true).length, focusCount);
+  snapshots.set('15', { href: detail('15').url, ready: true, sequence: 2, entries: [], domItem: { id: '15', title: 'ready', price: '10' } });
+  await tick();
+  assert.equal(windows.get(host.id).state, 'normal');
+  snapshots.set('16', { href: detail('16').url, ready: true, sequence: 2, entries: [], domItem: { id: '16', title: 'ready', price: '10' } });
+  await tick();
+  assert.equal(windows.get(host.id).state, 'minimized');
+  assert.equal(resumes.length, 2);
+});
+
+test('collection does not reuse a search window navigated to a different site by the user', async () => {
+  const host = await backgroundSearch();
+  tabs.get(host.tabs[0].id).url = 'https://example.com/user-page';
+  commands = [detail('17')];
+  await tick();
+  assert.notEqual(storage['nativeJob:slot-17'].windowId, host.id);
+  assert.equal(windowEvents.filter(e => e.operation === 'createTab').length, 0);
+  commands = []; activeRun = null;
+  await tick();
+  assert.equal(tabs.size, 1);
+  assert.equal(tabs.get(host.tabs[0].id).url, 'https://example.com/user-page');
 });
 
 test('collection and timeouts stay minimized while verification opens once and returns to background', async () => {
