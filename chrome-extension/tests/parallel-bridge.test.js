@@ -181,3 +181,27 @@ test('a backend delay releases the detail window and the seller starts only when
   assert.ok(reports.some(r => r.command_id === 'seller-10' && r.outcome === 'ok'));
   assert.equal(tabs.size, 0);
 });
+
+test('the search window keeps its profile open through final-page delays and closes after collection', async () => {
+  activeRun = 'run'; attentions = []; keepSearch = true;
+  const searchWindow = await chrome.windows.create({ url: 'https://www.goofish.com/search?q=test' });
+  storage.nativeParallelState = { slots: ['search'] };
+  storage['nativeJob:search'] = { slotId: 'search', runId: 'run', windowId: searchWindow.id,
+    tabs: { search: searchWindow.tabs[0].id }, tabKey: 'search',
+    lastCommand: { command_id: 'search-final', action: 'search', slot_id: 'search' } };
+  commands = [];
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(tabs.size, 1);
+  assert.equal(storage['nativeJob:search'].windowId, searchWindow.id);
+  commands = [detail('11')];
+  await tick(); await tick(); await tick(); await tick();
+  assert.ok(reports.some(r => r.command_id === 'command-11' && r.outcome === 'ok'));
+  assert.equal(tabs.size, 1);
+  for (let i = 0; i < 5; i++) await tick();
+  assert.deepEqual(storage.nativeParallelState.slots, ['search']);
+  assert.equal(storage['nativeJob:search'].windowId, searchWindow.id);
+  activeRun = null; keepSearch = false;
+  await tick();
+  assert.equal(tabs.size, 0);
+  assert.deepEqual(storage.nativeParallelState.slots, []);
+});

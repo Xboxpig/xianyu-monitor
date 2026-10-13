@@ -431,12 +431,42 @@ def test_stop_cancels_pending_delay(tmp_path, monkeypatch, sample_task_payload):
         search = (await service.poll(client))['command']
         await service.report(report_for(search, items=[BrowserItem(id='1')]))
         deferred = next(iter(service.processes[1].commands.values()))['command']
-        assert (await service.poll(client))['command'] is None
+        response = await service.poll(client)
+        assert response['command'] is None
+        assert service.processes[1].search_done and response['keep_search']
         assert await service.stop_task(1)
         service._clock.advance(100)
         assert (await service.poll(client))['commands'] == []
         with pytest.raises(ValueError):
             await service.report(report_for(deferred, item=BrowserItem(id='1')))
+        await service.stop_all()
+
+    asyncio.run(scenario())
+
+
+def test_final_page_keeps_profile_window_until_collection_finishes(tmp_path, monkeypatch, sample_task_payload):
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload, max_pages=1)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True)
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        search = (await service.poll(client))['command']
+        item = BrowserItem(id='1', seller_id='101')
+        await service.report(report_for(search, items=[item], has_more=True))
+        run = service.processes[1]
+        assert run.search_done
+        waiting = await service.poll(client)
+        assert waiting['commands'] == [] and waiting['keep_search'] and waiting['active_run_id'] == run.run_id
+        detail = (await ready_poll(service, client))['command']
+        await service.report(report_for(detail, item=item))
+        waiting = await service.poll(client)
+        assert waiting['commands'] == [] and waiting['keep_search']
+        seller = (await ready_poll(service, client))['command']
+        await service.report(report_for(seller, seller={}))
+        assert not run.collecting
+        finished = await service.poll(client)
+        assert not finished.get('keep_search') and not finished.get('active_run_id')
         await service.stop_all()
 
     asyncio.run(scenario())

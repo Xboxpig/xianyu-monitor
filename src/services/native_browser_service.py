@@ -258,7 +258,9 @@ class NativeBrowserService:
             run.issued_at = dispatched[0]["issued_at"] if dispatched else 0
             return {"command": run.command, "commands": commands, "attention": attentions[0] if attentions else None,
                     "attentions": attentions, "active_run_id": run.run_id, "memory_limit_mb": budget,
-                    "keep_search": not run.search_done, "memory_mb": sum(reserved.values())}
+                    # Keep this profile open between deferred commands on the final page.
+                    # Chrome may unload a profile when its last window is closed.
+                    "keep_search": True, "memory_mb": sum(reserved.values())}
 
     async def report(self, report: BrowserReport):
         run = next((r for r in self.processes.values() if r.run_id == report.run_id), None)
