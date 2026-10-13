@@ -38,6 +38,7 @@ class NativeRun:
     command: dict | None = None
     issued_at: float = 0
     waiting: str = ""
+    connection_waiting: str = ""
     page: int = 1
     has_more: bool = False
     personal_applied: bool = False
@@ -121,12 +122,22 @@ class NativeBrowserService:
                         for c in self.clients.values()],
             "runs": [{"task_id": r.task.id, "task_name": r.task.task_name,
                       "run_id": r.run_id, "client_id": r.client_id,
-                      "state": "attention" if r.waiting else ("collecting" if r.collecting else "analyzing"),
-                      "message": r.waiting or self._delay_message(r, now), "page": r.page, "pending_analysis": r.queue.qsize(),
+                      "state": "attention" if r.waiting or self._offline_message(r, now) else ("collecting" if r.collecting else "analyzing"),
+                      "message": self._offline_message(r, now) or r.waiting or self._delay_message(r, now), "page": r.page, "pending_analysis": r.queue.qsize(),
                       "active_windows": len(r.memory), "memory_mb": sum(r.memory.values()),
                       "memory_limit_mb": ScraperSettings().task_memory_mb}
                      for r in self.processes.values()],
         }
+
+    def _offline_message(self, run, now):
+        if not run.collecting:
+            return ""
+        client = self.clients.get(run.client_id)
+        if client and now - client["last_seen"] < CLIENT_TIMEOUT:
+            return ""
+        info = client["info"] if client else {}
+        profile = info.get("profile_directory") or run.task.account_state_file or run.client_id
+        return f"Chrome 账户 {profile} 的采集扩展已断开。请打开该账户的 Chrome，连接恢复后将自动继续。"
 
     def _log(self, run, message):
         path = Path(build_task_log_path(run.task.id, run.task.task_name))
@@ -191,7 +202,7 @@ class NativeBrowserService:
                 self.processes.pop(task_id, None)
                 raise
             run.workers = [asyncio.create_task(self._worker(run)) for _ in range(AISettings().analysis_concurrency)]
-            if self._watchdog is None:
+            if self._watchdog is None or self._watchdog.done():
                 self._watchdog = asyncio.create_task(self._watch_connections())
             self._log(run, "[Chrome] 任务已排队，使用浏览器：" + client["name"])
             self._log(run, f"[Chrome] 搜索页数上限：{task.max_pages} 页；扩展版本：{client.get('version', 'unknown')}")
@@ -211,6 +222,7 @@ class NativeBrowserService:
         if run is None:
             return {"command": None, "commands": [], "attention": None}
         async with run.lock:
+            run.connection_waiting = ""
             budget = ScraperSettings().task_memory_mb
             if client.parallel:
                 # Stable Chrome exposes heap only. Each owned window reserves native/DOM/image
@@ -438,23 +450,41 @@ class NativeBrowserService:
     async def _watch_connections(self):
         while True:
             await asyncio.sleep(10)
-            now = self._clock()
-            for run in tuple(self.processes.values()):
-                async with run.lock:
-                    if self.processes.get(run.task.id) is not run or run.returncode is not None or not run.collecting:
-                        continue
-                    client = self.clients.get(run.client_id)
+            await self._check_connections()
+
+    async def _check_connections(self):
+        now = self._clock()
+        for run in tuple(self.processes.values()):
+            async with run.lock:
+                if self.processes.get(run.task.id) is not run or run.returncode is not None or not run.collecting:
+                    continue
+                offline = self._offline_message(run, now)
+                if offline:
+                    # Delayed and queued commands have no issued_at, but still depend on
+                    # this exact profile. Keep them unissued so reconnect can dispatch them.
                     for entry in run.commands.values():
-                        if not entry["issued_at"] or entry["waiting"]:
-                            continue
-                        if not client or now - client["last_seen"] > CLIENT_TIMEOUT:
-                            entry["waiting"] = "Chrome 扩展已断开。请重新打开 Chrome，连接和页面恢复后将自动继续。"
-                        elif now - entry["issued_at"] > COMMAND_TIMEOUT:
-                            entry["waiting"] = "页面采集超时。请检查 Chrome 中的页面，数据恢复后将自动继续。"
-                        if entry["waiting"]:
-                            run.waiting = entry["waiting"]
-                            self._log(run, "[Chrome] " + run.waiting)
-                            await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)
+                        if entry["issued_at"] and not entry["waiting"]:
+                            entry["waiting"] = offline
+                    if run.connection_waiting != offline:
+                        run.connection_waiting = offline
+                        await self._notify_waiting(run, offline)
+                    continue
+                run.connection_waiting = ""
+                for entry in run.commands.values():
+                    if not entry["issued_at"] or entry["waiting"]:
+                        continue
+                    if now - entry["issued_at"] > COMMAND_TIMEOUT:
+                        entry["waiting"] = run.waiting = "页面采集超时。请检查 Chrome 中的页面，数据恢复后将自动继续。"
+                        await self._notify_waiting(run, entry["waiting"])
+
+    async def _notify_waiting(self, run, message):
+        self._log(run, "[Chrome] " + message)
+        try:
+            await asyncio.wait_for(windows_desktop_service.notify_attention(
+                run.run_id, run.task.task_name, message), timeout=10)
+        except Exception as exc:
+            # A failed Windows notification must not stop monitoring every task.
+            self._log(run, "[Chrome] Windows 通知失败：" + type(exc).__name__)
 
     async def stop_all(self):
         for task_id in tuple(self.processes):

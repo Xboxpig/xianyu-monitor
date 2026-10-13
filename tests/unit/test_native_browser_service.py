@@ -463,3 +463,127 @@ def test_search_obeys_eight_page_limit_and_rejects_relabelled_responses(tmp_path
         await service.stop_all()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('stage', ['queued', 'detail', 'seller', 'memory'])
+def test_disconnected_profile_is_reported_before_command_dispatch_and_recovers(
+        tmp_path, monkeypatch, sample_task_payload, stage):
+    from src.services import native_browser_service as module
+    notices = []
+
+    async def notify(*args):
+        notices.append(args)
+
+    monkeypatch.setattr(module.windows_desktop_service, 'notify_attention', notify)
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload,
+                              account_strategy='fixed', account_state_file='chrome-profile:Profile 3')
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1', parallel=True,
+                               profile_directory='Profile 3', account_state_file='chrome-profile:Profile 3')
+        other = BrowserClient(client_id='chrome-client-2', parallel=True, profile_directory='Profile 1')
+        await service.poll(client)
+        await service.start_task(1, 'one')
+        await service.start_task(2, 'two')
+        run = service.processes[1]
+        if stage != 'queued':
+            search = (await service.poll(client))['command']
+            item = BrowserItem(id='1', seller_id='101')
+            await service.report(report_for(search, items=[item]))
+            if stage == 'seller':
+                detail = (await ready_poll(service, client))['command']
+                await service.report(report_for(detail, item=item))
+            if stage == 'memory':
+                monkeypatch.setenv('BROWSER_TASK_MEMORY_MB', '512')
+                client.windows = [BrowserMemory(run_id=run.run_id, slot_id='search', memory_mb=512)]
+                service._clock.advance(20)
+                assert (await service.poll(client))['command'] is None
+        entry = next(iter(run.commands.values()))
+        assert entry['issued_at'] == 0
+        service._clock.advance(91)
+        await service.poll(other)
+        # Status reflects the specific owner even before the periodic watchdog runs.
+        status = service.status()
+        assert status['connected'] and all(r['state'] == 'attention' for r in status['runs'])
+        assert all('Profile 3' in r['message'] and '已断开' in r['message'] for r in status['runs'])
+        await service._check_connections()
+        await service._check_connections()
+        assert len(notices) == 2
+        assert entry['issued_at'] == 0 and not entry['waiting']
+        assert (await service.poll(other))['commands'] == []
+        client.windows = []
+        resumed = (await service.poll(client))['command']
+        assert resumed['command_id'] == entry['command']['command_id']
+        assert resumed['run_id'] == run.run_id
+        await service._check_connections()
+        assert all(r['state'] == 'collecting' for r in service.status()['runs'])
+        assert all(not r.connection_waiting for r in service.processes.values())
+        await service.stop_all()
+
+    asyncio.run(scenario())
+
+
+def test_dispatched_disconnect_keeps_resume_protocol_and_analysis_is_independent(
+        tmp_path, monkeypatch, sample_task_payload):
+    from src.services import native_browser_service as module
+    notices = []
+
+    async def notify(*args):
+        notices.append(args)
+
+    monkeypatch.setattr(module.windows_desktop_service, 'notify_attention', notify)
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1')
+        await service.poll(client)
+        await service.start_task(1, 'one')
+        command = (await service.poll(client))['command']
+        service._clock.advance(91)
+        await service._check_connections()
+        response = await service.poll(client)
+        assert response['command'] is None and response['attention']['command_id'] == command['command_id']
+        await service.resume(client.client_id, command['run_id'], command['command_id'])
+        resumed = (await service.poll(client))['command']
+        assert resumed['resume'] and resumed['slot_id'] == command['slot_id']
+        run = service.processes[1]
+        await service.report(report_for(resumed, has_more=False))
+        assert not run.collecting
+        service._clock.advance(91)
+        # Losing Chrome after collection must not mislabel AI work as blocked.
+        assert service.status()['runs'][0]['state'] == 'analyzing'
+        await service._check_connections()
+        assert len(notices) == 1
+        await service.stop_all()
+
+    asyncio.run(scenario())
+
+
+def test_notification_failure_does_not_stop_connection_checks(tmp_path, monkeypatch, sample_task_payload):
+    from src.services import native_browser_service as module
+    notices = []
+
+    async def notify(*args):
+        notices.append(args)
+        raise RuntimeError('notification unavailable')
+
+    monkeypatch.setattr(module.windows_desktop_service, 'notify_attention', notify)
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1')
+        await service.poll(client)
+        await service.start_task(1, 'one')
+        await service.start_task(2, 'two')
+        service._clock.advance(91)
+        await service._check_connections()
+        assert len(notices) == 2
+        assert all(r.connection_waiting for r in service.processes.values())
+        await service.poll(client)
+        await service._check_connections()
+        service._clock.advance(91)
+        await service._check_connections()
+        assert len(notices) == 4
+        await service.stop_all()
+
+    asyncio.run(scenario())
