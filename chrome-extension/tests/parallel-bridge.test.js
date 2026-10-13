@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 const storage = { nativeConfig: { enabled: false, token: 'token', client_id: 'chrome-client-1', endpoint: 'http://127.0.0.1:8000' } };
@@ -63,7 +63,8 @@ globalThis.fetch = async (url, options) => {
     if (failReport) throw Error('network unavailable');
     reports.push(body);
     commands = commands.filter(c => c.command_id !== body.command_id);
-    if (body.outcome === 'attention') attentions.push({ run_id: body.run_id, command_id: body.command_id, message: body.message });
+    if (body.outcome === 'attention') attentions.push({ run_id: body.run_id, command_id: body.command_id,
+      message: body.message, needs_verification: body.needs_verification || false });
   }
   if (url.endsWith('/resume')) {
     resumes.push(body);
@@ -77,6 +78,14 @@ globalThis.fetch = async (url, options) => {
 const { tick } = await import('../native-bridge.js');
 await Promise.resolve();
 storage.nativeConfig.enabled = true;
+beforeEach(() => {
+  for (const key of Object.keys(storage)) if (key !== 'nativeConfig') delete storage[key];
+  storage.nativeConfig.enabled = true;
+  tabs.clear(); windows.clear(); snapshots.clear();
+  reports.length = 0; resumes.length = 0; windowEvents.length = 0;
+  serial = 100; commands = []; attentions = []; activeRun = 'run';
+  keepSearch = false; failReport = false; lastPoll = undefined;
+});
 function detail(id) {
   return { run_id: 'run', command_id: 'command-' + id, slot_id: 'slot-' + id, action: 'detail',
     url: 'https://www.goofish.com/item?id=' + id, page: 1, task: {} };
@@ -168,6 +177,8 @@ test('a seller with no items completes while a missing nonempty list waits for d
 
 test('a backend delay releases the detail window and the seller starts only when dispatched', async () => {
   activeRun = 'run'; attentions = [];
+  snapshots.set(null, { ready: true, entries: [{ url: 'mtop.idle.web.user.page.head',
+    body: { data: { module: { tabs: { item: { number: 0 }, rate: { number: 0 } } } } } }] });
   commands = [detail('10')];
   await tick(); await tick(); await tick();
   const detailWindow = storage['nativeJob:slot-10'].windowId;
