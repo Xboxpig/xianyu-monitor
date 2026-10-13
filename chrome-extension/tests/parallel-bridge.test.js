@@ -7,6 +7,7 @@ const windows = new Map();
 const snapshots = new Map();
 const reports = [];
 const resumes = [];
+const windowEvents = [];
 let serial = 100;
 let commands = [];
 let attentions = [];
@@ -27,14 +28,18 @@ globalThis.chrome = {
   windows: {
     async get(id) { if (!windows.has(id)) throw Error('missing'); return windows.get(id); },
     async create(options) {
+      windowEvents.push({ operation: 'create', ...options });
       const id = serial++;
       const tab = { id: serial++, windowId: id, url: options.url, status: 'complete' };
       tabs.set(tab.id, tab);
-      const window = { id, tabs: [tab] };
+      const window = { ...options, id, tabs: [tab] };
       windows.set(id, window);
       return window;
     },
-    async update() {},
+    async update(id, options) {
+      windowEvents.push({ operation: 'update', id, ...options });
+      Object.assign(windows.get(id), options);
+    },
   },
   tabs: {
     async get(id) { if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); },
@@ -204,4 +209,36 @@ test('the search window keeps its profile open through final-page delays and clo
   await tick();
   assert.equal(tabs.size, 0);
   assert.deepEqual(storage.nativeParallelState.slots, []);
+});
+
+test('collection and timeouts stay minimized while verification opens once and returns to background', async () => {
+  activeRun = 'run'; attentions = []; keepSearch = false;
+  const eventStart = windowEvents.length;
+  const command = detail('12');
+  commands = [command];
+  await tick();
+  const windowId = storage['nativeJob:slot-12'].windowId;
+  assert.equal(windows.get(windowId).state, 'minimized');
+  assert.equal(windows.get(windowId).focused, false);
+  commands = [];
+  attentions = [{ run_id: 'run', command_id: command.command_id, message: '页面采集超时', needs_verification: false }];
+  snapshots.set('12', { href: command.url, ready: false });
+  await tick();
+  assert.equal(windowEvents.slice(eventStart).filter(e => e.focused === true).length, 0);
+  assert.equal(windows.get(windowId).state, 'minimized');
+  attentions[0].needs_verification = true;
+  snapshots.set('12', { href: command.url, sequence: 1, attention: 'login required' });
+  await tick(); await tick();
+  assert.equal(windows.get(windowId).state, 'normal');
+  assert.equal(windowEvents.slice(eventStart).filter(e => e.focused === true).length, 1);
+  snapshots.set('12', { href: command.url, ready: true, sequence: 2, entries: [],
+    domItem: { id: '12', title: 'ready', price: '10' } });
+  await tick();
+  assert.equal(windows.get(windowId).state, 'minimized');
+  assert.equal(windows.get(windowId).focused, false);
+  assert.equal(storage['nativeJob:slot-12'].verificationShown, false);
+  assert.ok(resumes.some(r => r.command_id === command.command_id));
+  activeRun = null;
+  await tick();
+  assert.equal(tabs.size, 0);
 });

@@ -43,14 +43,21 @@ async function closeOwnedTabs(state) {
   }
 }
 
-async function showAttention(state, message) {
-  if (state.attention !== message) {
+async function showAttention(state, message, needsVerification = false) {
+  if (needsVerification && (state.attention !== message || !state.verificationShown)) {
     try { await chrome.windows.update(state.windowId, { state: "normal", focused: true }); } catch (_) {}
     const id = state.tabs?.[state.tabKey];
     if (id) { try { await chrome.tabs.update(id, { active: true }); } catch (_) {} }
+    state.verificationShown = true;
   }
   state.attention = message;
   await save(state);
+}
+
+async function hideVerificationWindow(state) {
+  if (!state.verificationShown) return;
+  try { await chrome.windows.update(state.windowId, { state: 'minimized', focused: false }); } catch (_) {}
+  state.verificationShown = false;
 }
 
 async function execute(tabId, func, args) {
@@ -86,6 +93,7 @@ async function resumeWhenReady(state, attention) {
   if (state.slotId) {
     const { nativeConfig: config } = await chrome.storage.local.get('nativeConfig');
     await request(config, 'resume', { client_id: config.client_id, run_id: attention.run_id, command_id: attention.command_id });
+    await hideVerificationWindow(state);
     state.attention = '';
     state.command = null;
     state.collectorVersion = chrome.runtime.getManifest().version;
@@ -164,7 +172,7 @@ async function collectStep(state) {
     Math.ceil((snapshot?.heapBytes || 0) * 2 / 1048576) + 128);
   if (command.resume && snapshot?.sequence < state.searchSequenceFloor) state.searchSequenceFloor = 0;
   if (snapshot?.attention) {
-    await queueReport(state, { outcome: "attention", message: snapshot.attention });
+    await queueReport(state, { outcome: "attention", message: snapshot.attention, needs_verification: true });
     return;
   }
   if (state.phase === "turning") {
@@ -307,7 +315,7 @@ async function queueReport(state, result) {
   await save(state);
   if (result.outcome === "attention") {
     state.attentionCheckpoint = state.pageCheckpoint;
-    await showAttention(state, result.message);
+    await showAttention(state, result.message, result.needs_verification);
   }
 }
 
@@ -341,7 +349,7 @@ async function legacyTick() {
     });
     await chrome.storage.local.set({ nativeConnection: { online: true, error: "", checkedAt: Date.now(), attention: response.attention } });
     if (response.attention) {
-      await showAttention(state, response.attention.message);
+      await showAttention(state, response.attention.message, response.attention.needs_verification);
       await resumeWhenReady(state, response.attention);
       return;
     }
@@ -397,6 +405,7 @@ async function resume() {
   }
   await request(config, "resume", { client_id: config.client_id, run_id: runId });
   if (state) {
+    await hideVerificationWindow(state);
     // Preserve the page and pending interaction after login or an extension update.
     state.command = null;
     state.attention = "";
@@ -495,7 +504,7 @@ export async function tick() {
     const steps = await Promise.allSettled(Object.values(jobs).map(async state => {
       const attention = attentions.find(a => a.command_id === state.lastCommand?.command_id);
       if (attention) {
-        await showAttention(state, attention.message);
+        await showAttention(state, attention.message, attention.needs_verification);
         await resumeWhenReady(state, attention);
       } else if (state.command && liveIds.has(state.command.command_id)) {
         await collectStep(state);

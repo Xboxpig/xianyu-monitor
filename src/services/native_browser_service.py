@@ -251,7 +251,8 @@ class NativeBrowserService:
                         self._log(run, f'[Chrome] 商品 {entry["item"].id}：开始打开{target}')
             admit_pending()
             commands = [e["command"] for e in dispatched if not e["waiting"]]
-            attentions = [{"run_id": run.run_id, "command_id": e["command"]["command_id"], "message": e["waiting"]}
+            attentions = [{"run_id": run.run_id, "command_id": e["command"]["command_id"], "message": e["waiting"],
+                           "needs_verification": e.get("needs_verification", False)}
                           for e in dispatched if e["waiting"]]
             run.waiting = attentions[0]["message"] if attentions else ""
             run.command = commands[0] if commands else None
@@ -282,6 +283,7 @@ class NativeBrowserService:
                 message = report.message or "请在 Chrome 页面中完成登录或验证，页面恢复后将自动继续。"
                 changed = entry["waiting"] != message
                 entry["waiting"] = run.waiting = message
+                entry["needs_verification"] = report.needs_verification
                 self._log(run, "[Chrome] 等待人工处理：" + run.waiting)
                 if changed:
                     await windows_desktop_service.notify_attention(run.run_id, run.task.task_name, run.waiting)

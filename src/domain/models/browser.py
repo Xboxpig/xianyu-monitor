@@ -69,6 +69,7 @@ class BrowserReport(BaseModel):
     command_id: str = Field(min_length=1, max_length=100)
     outcome: Literal["ok", "attention", "error"] = "ok"
     message: str = Field(default="", max_length=2000)
+    needs_verification: bool = False
     items: list[BrowserItem] = Field(default_factory=list, max_length=200)
     item: BrowserItem | None = None
     seller: dict = Field(default_factory=dict)

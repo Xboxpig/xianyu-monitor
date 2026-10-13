@@ -617,3 +617,21 @@ def test_notification_failure_does_not_stop_connection_checks(tmp_path, monkeypa
         await service.stop_all()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize('verification', [False, True])
+def test_only_verification_requests_foreground_window(tmp_path, monkeypatch, sample_task_payload, verification):
+    service, _ = make_service(tmp_path, monkeypatch, sample_task_payload)
+
+    async def scenario():
+        client = BrowserClient(client_id='chrome-client-1')
+        await service.poll(client)
+        await service.start_task(1, 'test')
+        command = (await service.poll(client))['command']
+        await service.report(report_for(command, outcome='attention', message='page needs attention',
+                                        needs_verification=verification))
+        attention = (await service.poll(client))['attention']
+        assert attention['needs_verification'] is verification
+        await service.stop_all()
+
+    asyncio.run(scenario())

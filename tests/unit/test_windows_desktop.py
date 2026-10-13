@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -91,3 +92,18 @@ def test_tray_quit_is_deduplicated_and_cleanup_stops_icon():
     service.stop()
     assert actions == ['quit', 'stop']
     assert service.icon is None and service.thread is None
+
+
+@pytest.mark.parametrize('arguments, expected', [([], False), (['--no-browser'], False), (['--open-browser'], True)])
+def test_startup_opens_dashboard_only_when_requested(monkeypatch, arguments, expected):
+    from src.services import windows_desktop_launcher as launcher
+    opened = []
+
+    async def run(port, *, open_browser=False):
+        opened.append((port, open_browser))
+
+    monkeypatch.setattr(launcher, 'run', run)
+    monkeypatch.setenv('SERVER_PORT', '8000')
+    monkeypatch.setattr(sys, 'argv', ['launcher', *arguments])
+    launcher.main()
+    assert opened == [(8000, expected)]

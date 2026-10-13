@@ -11,7 +11,7 @@ from src.services.native_chrome_launcher import find_chrome, launch_chrome
 from src.services.windows_desktop_service import windows_desktop_service
 
 
-async def run(port, *, open_browser=True):
+async def run(port, *, open_browser=False):
     if open_browser:
         find_chrome()
     server = uvicorn.Server(uvicorn.Config("src.app:app", host="127.0.0.1", port=port))
@@ -47,11 +47,13 @@ async def run(port, *, open_browser=True):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=int(os.getenv("SERVER_PORT", "8000")))
-    parser.add_argument("--no-browser", action="store_true")
+    browser_options = parser.add_mutually_exclusive_group()
+    browser_options.add_argument("--open-browser", action="store_true")
+    browser_options.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("Port must be between 1 and 65535.")
-    asyncio.run(run(args.port, open_browser=not args.no_browser))
+    asyncio.run(run(args.port, open_browser=args.open_browser))
 
 
 if __name__ == "__main__":

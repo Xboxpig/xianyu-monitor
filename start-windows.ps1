@@ -2,9 +2,11 @@ param(
     [ValidateRange(1, 65535)][int]$Port = 8000,
     [switch]$Setup,
     [switch]$Build,
+    [switch]$OpenBrowser,
     [switch]$NoBrowser
 )
 $ErrorActionPreference = 'Stop'
+if ($OpenBrowser -and $NoBrowser) { throw 'Choose either -OpenBrowser or -NoBrowser.' }
 Set-Location -LiteralPath $PSScriptRoot
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
@@ -56,4 +58,5 @@ Write-Host "Database: $env:APP_DATABASE_FILE"
 Write-Host 'Use the Windows tray menu to open the dashboard or exit. Ctrl+C also stops the backend.'
 $launchArguments = @('-m', 'src.services.windows_desktop_launcher', '--port', "$Port")
 if ($NoBrowser) { $launchArguments += '--no-browser' }
+if ($OpenBrowser) { $launchArguments += '--open-browser' }
 Invoke-Checked $pythonExe $launchArguments

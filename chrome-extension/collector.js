@@ -368,7 +368,7 @@ export async function interactPage(operation, options = {}) {
 }
 
 export function collectSnapshot(snapshot, command) {
-  if (snapshot.attention) return { outcome: "attention", message: snapshot.attention };
+  if (snapshot.attention) return { outcome: "attention", message: snapshot.attention, needs_verification: true };
   const entries = snapshot.entries || [];
   if (command.action === "search" || command.action === "search_next") {
     const responses = entries.filter(entry => entry.url.includes("idlemtopsearch.pc.search"));
